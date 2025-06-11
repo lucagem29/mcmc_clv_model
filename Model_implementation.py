@@ -1,4 +1,6 @@
 # %% [Imports]
+#!pip install numpy scipy pandas matplotlib numba arviz tabulate seaborn tqdm xlsxwriter openpyxl
+#!pip install lifetimes --quiet
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,6 +13,11 @@ from lifetimes import ParetoNBDFitter
 from Models.abe_hb_pareto_nbd import AbeHBParetoNBD, load_cdnow, CustomerRFT
 
 sns.set_theme(style="whitegrid")
+
+# Create folder for output images
+import os
+PICS_DIR = "Pics"
+os.makedirs(PICS_DIR, exist_ok=True)
 
 # %% ------------------------- [Load CDNOW]
 customers, _ = load_cdnow()                      # downloads once → ~/.cache
@@ -27,7 +34,6 @@ txn["t_week"] = (
 
 print(f"{len(customers):,} customers loaded.")
 
-# %% ------------------------- [Prepare RFM summary for lifetimes]
 calib_weeks = 39
 summary = (
     txn[txn["t_week"] <= calib_weeks]
@@ -53,7 +59,7 @@ hb_m1.run_mcmc(n_iter=14_000, burn_in=10_000, thin=1, proposal_scale=0.25)
 init_spend = (
     txn.sort_values("date").groupby("id")["spend"].first().reindex(summary.index).values / 1000
 )
-from abe_hb_pareto_nbd import CustomerRFT  # ensures symbol exists even if imports cell not run
+from Models.abe_hb_pareto_nbd import CustomerRFT  # ensures symbol exists even if imports cell not run
 cust_cov = [
     CustomerRFT(x=f, t_x=r, T=t, d=np.array([1.0, s]))
     for f, r, t, s in zip(freq, reci, Tarr, init_spend)
@@ -101,6 +107,7 @@ def figure2_tracking(model_hb, pnbd, txn, calib_weeks=39, horizon_weeks=80):
            title="Figure 2 — Weekly Time‑Series Tracking Plot for CDNOW Data")
     ax.legend(frameon=False)
     sns.despine(fig)
+    fig.savefig(os.path.join(PICS_DIR, "figure2.png"), dpi=300, bbox_inches="tight")
     return fig
 
 figure2_tracking(hb_m1, pnbd, txn)
@@ -146,6 +153,7 @@ def figure3_conditional(model_hb, pnbd, txn, calib_weeks=39):
     )
     ax.legend(frameon=False)
     sns.despine(fig)
+    fig.savefig(os.path.join(PICS_DIR, "figure3.png"), dpi=300, bbox_inches="tight")
     return fig
 
 figure3_conditional(hb_m1, pnbd, txn)
@@ -157,6 +165,7 @@ ax.scatter(lam, mu, s=12, alpha=0.5, edgecolor="none")
 ax.set(xlabel=r"$\lambda$", ylabel=r"$\mu$",
        title="Figure 4 — Posterior Means of λ and μ")
 sns.despine(fig)
+fig.savefig(os.path.join(PICS_DIR, "figure4.png"), dpi=300, bbox_inches="tight")
 
 # %% ------------------------- [Figure 5 — Histogram corr(logλ, logμ)]
 draws = np.stack(hb_m1.draws["theta"], axis=0)      # (n_draws, N, 2)
@@ -164,6 +173,7 @@ corrs = [np.corrcoef(d[:, 0], d[:, 1])[0, 1] for d in draws]
 sns.histplot(corrs, bins=30)
 plt.title("Figure 5 — Posterior distribution of corr( log λᵢ , log μᵢ )")
 plt.xlabel("Correlation"); plt.ylabel("Count")
+plt.gcf().savefig(os.path.join(PICS_DIR, "figure5.png"), dpi=300, bbox_inches="tight")
 
 # %% ------------------------- [Table 1 — Descriptive statistics]
 raw = pd.read_csv(
@@ -185,6 +195,39 @@ table1 = pd.DataFrame({
 table1.columns = ["Mean", "Std. dev.", "Min", "Max"]
 print("\nTable 1 — Descriptive Statistics for CDNOW Data")
 print(tabulate(table1, headers="keys", tablefmt="github"))
+
+def _save_table(df, filename, col_names=None):
+    fig, ax = plt.subplots(figsize=(6, 0.4*len(df)+1))
+    ax.axis("off")
+    if col_names is None:
+        col_names = df.columns
+    ax.table(
+        cellText=df.reset_index().values,
+        colLabels=[""] + list(col_names),
+        loc="center"
+    )
+    fig.savefig(os.path.join(PICS_DIR, filename), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+# Excel helper for saving tables
+def _save_excel(df, sheet_name):
+    """
+    Append or create Pics/tables.xlsx.
+    Uses xlsxwriter if available; falls back to openpyxl otherwise.
+    """
+    path = os.path.join(PICS_DIR, "tables.xlsx")
+    mode = "a" if os.path.exists(path) else "w"
+
+    try:
+        writer = pd.ExcelWriter(path, engine="xlsxwriter", mode=mode)
+    except ValueError:  # xlsxwriter not installed
+        writer = pd.ExcelWriter(path, engine="openpyxl", mode=mode, if_sheet_exists="replace")
+
+    with writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=True)
+
+#
+_save_excel(table1, "Table1")
 
 # %% ------------------------- [Table 2 — Model fit]
 def indiv_metrics(exp_val, act_val, exp_cal, act_cal):
@@ -270,6 +313,8 @@ table2 = pd.DataFrame({
 
 print("\nTable 2 — Model Fit Statistics")
 print(tabulate(table2, headers="keys", tablefmt="github"))
+#
+_save_excel(table2, "Table2")
 
 
 # %% ------------------------- [Table 3 — Estimation Results for CDNOW Data]
@@ -335,6 +380,8 @@ tbl3 = pd.DataFrame(
 )
 print("\nTable 3 — Estimation Results for CDNOW Data")
 print(tabulate(tbl3, headers="keys", tablefmt="github"))
+#
+_save_excel(tbl3, "Table3")
 
 
 # %% ------------------------- [Table 4 — Customer‑Specific top/bottom 10]
@@ -379,4 +426,6 @@ bot10 = df_cust.nsmallest(10, "Mean(λ)")
 table4 = pd.concat([top10, bot10]).round(3)
 print("\nTable 4 — Customer‑Specific Statistics (Top & Bottom 10 by λ)")
 print(tabulate(table4, headers="keys", tablefmt="github"))
+#
+_save_excel(table4, "Table4")
 # %%

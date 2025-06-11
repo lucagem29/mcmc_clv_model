@@ -84,7 +84,7 @@ if _HAVE_NUMBA:
 
     # full JIT log‑likelihood and parallel customer update (new in numba_backend.py)
     try:
-        from numba_backend import (
+        from Models.numba_backend import (
             log_complete_lik_numba,
             update_customers,        # full parallel customer sweep
         )
