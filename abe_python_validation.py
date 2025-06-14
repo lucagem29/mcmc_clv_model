@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 # Import functions 
 # Import custom modules for data processing
 from Models.elog2cbs import elog2cbs
-from Models.cdnow_preprocessing import create_customer_summary
+
 # Import custom modules for model estimation and prediction
 from Models.pareto_abe_manual import (
     mcmc_draw_parameters,
