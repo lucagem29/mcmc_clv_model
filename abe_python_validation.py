@@ -1,0 +1,429 @@
+# ------ 1. Import necessary libraries ------
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import arviz as az
+import os
+from openpyxl import load_workbook
+
+# Import functions 
+# Import custom modules for data processing
+from Models.elog2cbs import elog2cbs
+from Models.cdnow_preprocessing import create_customer_summary
+# Import custom modules for model estimation and prediction
+from Models.pareto_abe_manual import (
+    mcmc_draw_parameters,
+    draw_future_transactions
+)
+
+# Ensure Estimation directory exists
+os.makedirs("Estimation", exist_ok=True)
+excel_path = "Estimation/estimation_summaries.xlsx"
+
+# ------ 2. Load dataset and convert to CBS format ------
+# We use dataset available in the BTYD package in R
+data_path = os.path.join("Data", "cdnowElog.csv")
+cdnowElog = pd.read_csv(data_path)
+
+# Convert date column to datetime
+cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
+
+# Use preprocessing module to create CBS summary
+from Models.cdnow_preprocessing import create_customer_summary
+
+# Convert event log to customer-by-sufficient-statistic (CBS) format
+cbs = elog2cbs(cdnowElog, units="W", T_cal="1997-09-30", T_tot="1998-06-30")
+#cbs = create_customer_summary(cdnowElog, T_cal="1997-09-30", T_tot="1998-06-30")
+cbs = cbs.rename(columns={"t.x": "t_x", "T.cal": "T_cal", "x.star": "x_star"})
+cbs.head()
+
+# ------ Construct Table 1 from Abe 2009 (Descriptive Statistics) ---
+# Compute statistics: mean, std, min, max for each of the four fields
+table1_stats = pd.DataFrame({
+    "Mean": [
+        cbs["x"].mean(),
+        cbs["T_cal"].mean() * 7,  # weeks to days
+        (cbs["T_cal"] - cbs["t_x"]).mean() * 7,  # weeks to days
+        cdnowElog.groupby("cust")["sales"].first().mean()
+    ],
+    "Std. dev.": [
+        cbs["x"].std(),
+        cbs["T_cal"].std() * 7,
+        (cbs["T_cal"] - cbs["t_x"]).std() * 7,
+        cdnowElog.groupby("cust")["sales"].first().std()
+    ],
+    "Min": [
+        cbs["x"].min(),
+        cbs["T_cal"].min() * 7,
+        (cbs["T_cal"] - cbs["t_x"]).min() * 7,
+        cdnowElog.groupby("cust")["sales"].first().min()
+    ],
+    "Max": [
+        cbs["x"].max(),
+        cbs["T_cal"].max() * 7,
+        (cbs["T_cal"] - cbs["t_x"]).max() * 7,
+        cdnowElog.groupby("cust")["sales"].first().max()
+    ]
+}, index=[
+    "Number of repeats",
+    "Observation duration T (days)",
+    "Recency (T - t) (days)",
+    "Amount of initial purchase ($)"
+])
+
+print("Table 1. Descriptive Statistics for CDNOW dataset")
+print(table1_stats.round(2))
+
+# Save both summaries to a single Excel file with two sheets
+with pd.ExcelWriter(excel_path, engine="openpyxl", mode="w") as writer:
+    table1_stats.to_excel(writer, sheet_name="Table 1")
+
+# ------ 3. Start with model estimation M1 using no covariates ------
+
+# Estimate Model M1 (no covariates)
+draws_m1 = mcmc_draw_parameters(
+    cal_cbs=cbs,
+    covariates=[],
+    mcmc=4000,
+    burnin=10000,
+    thin=50,
+    chains=2,
+    seed=42,
+    trace=1000
+)
+
+# ------ 4. Estimate Model M2 (with covariates) ------
+
+# Append dollar amount of first purchase to use as covariate (like in R)
+first = cdnowElog.groupby("cust")["sales"].first().reset_index()
+first["first.sales"] = first["sales"] * 1e-3
+cbs = pd.merge(cbs, first[["cust", "first.sales"]], on="cust", how="left")
+
+# Normalize first.sales
+mean_val = cbs["first.sales"].mean()
+std_val = cbs["first.sales"].std()
+cbs["first.sales_scaled"] = (cbs["first.sales"] - mean_val) / std_val
+
+# Estimate Model M2 (with first.sales)
+draws_m2 = mcmc_draw_parameters(
+    cal_cbs=cbs,
+    covariates=["first.sales_scaled"],
+    mcmc=4000,
+    burnin=10000,
+    thin=50,
+    chains=2,
+    seed=42,
+    trace=500
+)
+
+# ------ 5. Computing the metrics for comparison ------
+
+# Function to summarize level 2 draws
+def summarize_level2(draws_level2: np.ndarray, param_names: list[str], decimals: int = 2) -> pd.DataFrame:
+    quantiles = np.percentile(draws_level2, [2.5, 50, 97.5], axis=0)
+    summary = pd.DataFrame(quantiles.T, columns=["2.5%", "50%", "97.5%"], index=param_names)
+    return summary.round(decimals)
+
+# Parameter names for Model 1 (M1): no covariates
+param_names_m1 = [
+    "log_lambda (intercept)",
+    "log_mu (intercept)",
+    "var_log_lambda",
+    "var_log_mu",
+    "cov_log_lambda_mu"
+]
+
+# Parameter names for Model 2 (M2): with covariate "first.sales"
+param_names_m2 = [
+    "log_lambda (intercept)",
+    "log_lambda (first.sales)",
+    "log_mu (intercept)",
+    "log_mu (first.sales)",
+    "var_log_lambda",
+    "var_log_mu",
+    "cov_log_lambda_mu"
+]
+
+# Compute summaries
+summary_m1 = summarize_level2(draws_m1["level_2"][0], param_names=param_names_m1)
+summary_m2 = summarize_level2(draws_m2["level_2"][0], param_names=param_names_m2)
+
+# Drop "MAE" row if present
+summary_m1 = summary_m1.drop(index="MAE", errors="ignore")
+summary_m2 = summary_m2.drop(index="MAE", errors="ignore")
+
+# Rename indices to match Table 3 from the paper
+summary_m1.index = [
+    "Purchase rate log(lambda) Intercept",
+    "Dropout rate log(mu) Intercept",
+    "sigma^2_lambda = var[log lambda]",
+    "sigma^2_mu = var[log mu]",
+    "sigma_lambda_mu = cov[log lambda, log mu]"
+]
+summary_m2.index = [
+    "Purchase rate log(lambda) Intercept",
+    "Purchase rate log(lambda) Initial amount ($ 10^-3)",
+    "Dropout rate log(mu) Intercept",
+    "Dropout rate log(mu) Initial amount ($ 10^-3)",
+    "sigma^2_lambda = var[log lambda]",
+    "sigma^2_mu = var[log mu]",
+    "sigma_lambda_mu = cov[log lambda, log mu]"
+]
+
+# Forecast future transactions
+# Draw future transactions
+xstar_m1_draws = draw_future_transactions(cbs, draws_m1, T_star=39.0, seed=42)
+xstar_m2_draws = draw_future_transactions(cbs, draws_m2, T_star=39.0, seed=42)
+cbs["xstar_m1_pred"] = xstar_m1_draws.mean(axis=0)
+cbs["xstar_m2_pred"] = xstar_m2_draws.mean(axis=0)
+
+# Compare MAE
+mae_m1 = np.mean(np.abs(cbs["x_star"] - cbs["xstar_m1_pred"]))
+mae_m2 = np.mean(np.abs(cbs["x_star"] - cbs["xstar_m2_pred"]))
+
+## The MAE rows are no longer added to the summaries here
+
+# Display both
+print("Posterior Summary - Model M1 (no covariates):")
+print(summary_m1)
+
+print("Posterior Summary - Model M2 (with covariates):")
+print(summary_m2)
+
+# ------ Construct Table 3 from Abe 2009 (Estimation Results) ------
+
+# --- Compute correlation between log_lambda and log_mu from posterior (for both models) ---
+def extract_correlation(draws_level2):
+    cov = draws_level2[:, -2]  # cov_log_lambda_mu
+    var_lambda = draws_level2[:, -3]
+    var_mu = draws_level2[:, -1]
+    corr = cov / np.sqrt(var_lambda * var_mu)
+    return np.percentile(corr, [2.5, 50, 97.5]).round(2)
+
+corr_m1 = extract_correlation(np.array(draws_m1["level_2"][0]))
+corr_m2 = extract_correlation(np.array(draws_m2["level_2"][0]))
+
+# Create correlation DataFrame
+correlation_row = pd.DataFrame({
+    ("HB M1 (no covariates)", "2.5%"): [corr_m1[0]],
+    ("HB M1 (no covariates)", "50%"): [corr_m1[1]],
+    ("HB M1 (no covariates)", "97.5%"): [corr_m1[2]],
+    ("HB M2 (with a covariate)", "2.5%"): [corr_m2[0]],
+    ("HB M2 (with a covariate)", "50%"): [corr_m2[1]],
+    ("HB M2 (with a covariate)", "97.5%"): [corr_m2[2]],
+}, index=["Correlation computed from Γ₀"])
+
+# Create Marginal Log-Likelihood row
+loglik_row = pd.DataFrame({
+    ("HB M1 (no covariates)", "2.5%"): [""],
+    ("HB M1 (no covariates)", "50%"): [-abs(round(draws_m1["log_likelihood"], 3))],
+    ("HB M1 (no covariates)", "97.5%"): [""],
+    ("HB M2 (with a covariate)", "2.5%"): [""],
+    ("HB M2 (with a covariate)", "50%"): [-abs(round(draws_m2["log_likelihood"], 3))],
+    ("HB M2 (with a covariate)", "97.5%"): [""],
+}, index=["Marginal log-likelihood"])
+
+# Format summary into 2D (col=quantiles) with aligned indices
+summary_m1_cleaned = summary_m1.copy()
+summary_m2_cleaned = summary_m2.copy()
+
+# Align the summaries vertically with correct row structure
+row_labels = [
+    "Purchase rate log(lambda) Intercept",
+    "Purchase rate log(lambda) Initial amount ($ 10^-3)",
+    "Dropout rate log(mu) Intercept",
+    "Dropout rate log(mu) Initial amount ($ 10^-3)",
+    "sigma^2_lambda = var[log lambda]",
+    "sigma^2_mu = var[log mu]",
+    "sigma_lambda_mu = cov[log lambda, log mu]"
+]
+
+# Create placeholder rows for missing M1 covariates
+m1_fill = pd.DataFrame(index=row_labels, columns=["2.5%", "50%", "97.5%"])
+for idx in summary_m1_cleaned.index:
+    m1_fill.loc[idx] = summary_m1_cleaned.loc[idx]
+
+m2_fill = pd.DataFrame(index=row_labels, columns=["2.5%", "50%", "97.5%"])
+for idx in summary_m2_cleaned.index:
+    m2_fill.loc[idx] = summary_m2_cleaned.loc[idx]
+
+# Concatenate horizontally for final Table 3 view
+table3_combined = pd.concat([m1_fill, m2_fill], axis=1)
+table3_combined.columns = pd.MultiIndex.from_product(
+    [["HB M1 (no covariates)", "HB M2 (with a covariate)"], ["2.5%", "50%", "97.5%"]]
+)
+
+# Append the correlation row and loglik row to Table 3
+table3_combined = pd.concat([table3_combined, correlation_row, loglik_row])
+
+# Save the table
+with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+    table3_combined.to_excel(writer, sheet_name="Table 3")
+
+
+
+
+
+
+
+# ------------ Additional visualizations and diagnostics ------------
+
+# 6. Create scatterplots to visualize the predictions of both models
+sns.set(style="whitegrid")
+
+# Create a figure with two subplots
+fig, axes = plt.subplots(1, 2, figsize=(12, 6), sharex=True, sharey=True)
+
+# Scatterplot for Model M1
+axes[0].scatter(cbs["x_star"], cbs["xstar_m1_pred"], alpha=0.4, color="tab:blue")
+axes[0].plot([0, cbs["x_star"].max()], [0, cbs["x_star"].max()], 'r--')
+axes[0].set_title("M1: Without Covariates")
+axes[0].set_xlabel("Actual x_star")
+axes[0].set_ylabel("Predicted x_star")
+
+# Scatterplot for Model M2
+axes[1].scatter(cbs["x_star"], cbs["xstar_m2_pred"], alpha=0.4, color="tab:green")
+axes[1].plot([0, cbs["x_star"].max()], [0, cbs["x_star"].max()], 'r--')
+axes[1].set_title("M2: With first.sales")
+axes[1].set_xlabel("Actual x_star")
+
+# Remove grid from both subplots
+for ax in axes:
+    ax.grid(False)
+
+plt.tight_layout()
+plt.show()
+
+# 7. Visualize the predicted alive vs. churned customers
+# Add a new column for predicted alive status based on xstar_m2_pred
+cbs["is_alive_pred"] = np.where(cbs["xstar_m2_pred"] > 0, 1, 0)
+
+# Prepare data
+counts = cbs["is_alive_pred"].value_counts().sort_index()
+labels = ["Churned (z = 0)", "Alive (z = 1)"]
+colors = ["#d3d3d3", "#4a90e2"]  # Light grey and business blue
+
+# Create figure and axis
+fig, ax = plt.subplots(figsize=(7, 4))
+
+# Plot bar chart
+bars = ax.bar(labels, counts, color=colors, width=0.5)
+
+# Set axis labels and title
+ax.set_ylabel("Number of customers", fontsize=11)
+ax.set_title("Predicted Alive vs. Churned\n(Last Draw of MCMC Chain)", fontsize=13)
+
+# Annotate each bar with its value
+for bar in bars:
+    height = bar.get_height()
+    ax.text(
+        bar.get_x() + bar.get_width() / 2,
+        height + 5,
+        f"{int(height)}",
+        ha='center',
+        va='bottom',
+        fontsize=10
+    )
+
+# Clean up the axis appearance
+ax.spines['right'].set_visible(False)
+ax.spines['top'].set_visible(False)
+ax.spines['left'].set_color('#999999')
+ax.spines['bottom'].set_color('#999999')
+ax.tick_params(axis='y', colors='#444444')
+ax.tick_params(axis='x', colors='#444444')
+
+# Final layout adjustment
+plt.tight_layout()
+plt.show()
+
+# 8. Visualize the posterior distributions and traceplots for both models
+# Convert M1 to InferenceData
+idata_m1 = az.from_dict(
+    posterior={"level_2": np.array(draws_m1["level_2"])},  # shape: (chains, draws, dims)
+    coords={"param": [  # labels for better plots
+        "log_lambda (intercept)", 
+        "log_mu (intercept)", 
+        "var_log_lambda", 
+        "cov_log_lambda_mu", 
+        "var_log_mu"
+    ]},
+    dims={"level_2": ["param"]}
+)
+# Convert M2 to InferenceData
+idata_m2 = az.from_dict(
+    posterior={"level_2": np.array(draws_m2["level_2"])},
+    coords={"param": [
+        "log_lambda (intercept)",
+        "log_lambda (first.sales)",
+        "log_mu (intercept)",
+        "log_mu (first.sales)",
+        "var_log_lambda",
+        "cov_log_lambda_mu",
+        "var_log_mu"
+    ]},
+    dims={"level_2": ["param"]}
+)
+
+# Plot traceplots for both models
+az.plot_trace(idata_m1, var_names=["level_2"], figsize=(12, 6))
+plt.suptitle("Traceplot - M1", fontsize=14)
+plt.tight_layout()
+plt.show()
+
+az.plot_trace(idata_m2, var_names=["level_2"], figsize=(12, 10))
+plt.suptitle("Traceplot - M2", fontsize=14)
+plt.tight_layout()
+plt.show()
+
+# 9. Summary and convergence diagnostics
+# Traceplot – M1 and M2
+az.summary(idata_m1, var_names=["level_2"], round_to=4)
+
+# Convergence Summary – M1
+az.summary(idata_m2, var_names=["level_2"], round_to=4)
+
+# Convergence Summary – M2
+# For M1
+az.plot_autocorr(idata_m1, var_names=["level_2"], figsize=(12, 6))
+plt.suptitle("Autocorrelation - M1", fontsize=14)
+plt.tight_layout()
+plt.show()
+
+# For M2
+az.plot_autocorr(idata_m2, var_names=["level_2"], figsize=(12, 10))
+plt.suptitle("Autocorrelation - M2", fontsize=14)
+plt.tight_layout()
+plt.show()
+
+# 10. Autocorrelation – M1 vs. M2
+# Get number of parameters (last dimension)
+n_params_m1 = idata_m1.posterior["level_2"].shape[-1]
+n_params_m2 = idata_m2.posterior["level_2"].shape[-1]
+
+# M1
+fig = az.plot_posterior(
+    idata_m1,
+    var_names=["level_2"],
+    figsize=(8, n_params_m1 * 2),  # auto-height
+    hdi_prob=0.95,
+    kind='kde',
+    grid=(n_params_m1, 1)  # 1 column, n rows
+)
+plt.suptitle("Posterior Distributions - M1", fontsize=16, y=1.02)
+plt.subplots_adjust(hspace=0.5)
+plt.show()
+
+# M2
+fig = az.plot_posterior(
+    idata_m2,
+    var_names=["level_2"],
+    figsize=(8, n_params_m2 * 2),  # auto-height
+    hdi_prob=0.95,
+    kind='kde',
+    grid=(n_params_m2, 1)
+)
+plt.suptitle("Posterior Distributions - M2", fontsize=16, y=1.02)
+plt.subplots_adjust(hspace=0.5)
+plt.show()
