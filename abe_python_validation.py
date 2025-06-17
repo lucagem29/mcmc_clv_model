@@ -29,9 +29,6 @@ cdnowElog = pd.read_csv(data_path)
 # Convert date column to datetime
 cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
 
-# Use preprocessing module to create CBS summary
-from Models.cdnow_preprocessing import create_customer_summary
-
 # Convert event log to customer-by-sufficient-statistic (CBS) format
 cbs = elog2cbs(cdnowElog, units="W", T_cal="1997-09-30", T_tot="1998-06-30")
 #cbs = create_customer_summary(cdnowElog, T_cal="1997-09-30", T_tot="1998-06-30")
