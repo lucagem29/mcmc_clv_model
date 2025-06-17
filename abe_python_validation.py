@@ -260,9 +260,14 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
 
 
 
+cbs["xstar_m2_pred"].describe()
 
+cbs["x_star"].value_counts()
 
+print("xstar_m2_draws.shape:", xstar_m2_draws.shape)
+print("xstar_m2_pred stats:", cbs["xstar_m2_pred"].describe())
 
+cbs["first.sales_scaled"].describe()
 
 # ------------ Additional visualizations and diagnostics ------------
 
@@ -294,7 +299,7 @@ plt.show()
 
 # 7. Visualize the predicted alive vs. churned customers
 # Add a new column for predicted alive status based on xstar_m2_pred
-cbs["is_alive_pred"] = np.where(cbs["xstar_m2_pred"] > 0, 1, 0)
+cbs["is_alive_pred"] = np.where(cbs["xstar_m2_pred"] >= 1, 1, 0)
 
 # Prepare data
 counts = cbs["is_alive_pred"].value_counts().sort_index()
