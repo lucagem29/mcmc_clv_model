@@ -1,0 +1,20 @@
+# Ignore output files
+Estimation/
+*.xlsx
+*.csv
+
+# Ignore Jupyter
+*.ipynb
+.ipynb_checkpoints/
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Ignore virtual environments
+venv/
+env/
+
+# Ignore VSCode settings (optional)
+.vscode/
