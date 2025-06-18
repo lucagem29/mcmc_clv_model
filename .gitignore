@@ -8,6 +8,7 @@ Estimation/
 .ipynb_checkpoints/
 
 # Ignore Python cache
+Models/__pycache__/
 __pycache__/
 *.py[cod]
 *.so
