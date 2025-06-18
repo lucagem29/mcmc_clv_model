@@ -1,3 +1,4 @@
+# %% 1. Import necessary libraries
 # ------ 1. Import necessary libraries ------
 import numpy as np
 import pandas as pd
@@ -21,6 +22,7 @@ from Models.pareto_abe_manual import (
 os.makedirs("Estimation", exist_ok=True)
 excel_path = "Estimation/estimation_summaries.xlsx"
 
+# %% 2. Load dataset and convert to CBS format
 # ------ 2. Load dataset and convert to CBS format ------
 # We use dataset available in the BTYD package in R
 data_path = os.path.join("Data", "cdnowElog.csv")
@@ -35,6 +37,7 @@ cbs = elog2cbs(cdnowElog, units="W", T_cal="1997-09-30", T_tot="1998-06-30")
 cbs = cbs.rename(columns={"t.x": "t_x", "T.cal": "T_cal", "x.star": "x_star"})
 cbs.head()
 
+# %% 3. Construct Table 1: Descriptive Statistics
 # ------ Construct Table 1 from Abe 2009 (Descriptive Statistics) ---
 # Compute statistics: mean, std, min, max for each of the four fields
 table1_stats = pd.DataFrame({
@@ -76,6 +79,7 @@ print(table1_stats.round(2))
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="w") as writer:
     table1_stats.to_excel(writer, sheet_name="Table 1")
 
+# %% 4. Estimate Model M1 (no covariates)
 # ------ 3. Start with model estimation M1 using no covariates ------
 
 # Estimate Model M1 (no covariates)
@@ -114,6 +118,7 @@ draws_m2 = mcmc_draw_parameters(
     trace=500
 )
 
+# %% 5. Compute metrics and predictions
 # ------ 5. Computing the metrics for comparison ------
 
 # Function to summarize level 2 draws
@@ -168,12 +173,25 @@ summary_m2.index = [
     "sigma_lambda_mu = cov[log lambda, log mu]"
 ]
 
-# Forecast future transactions
-# Draw future transactions
-xstar_m1_draws = draw_future_transactions(cbs, draws_m1, T_star=39.0, seed=42)
-xstar_m2_draws = draw_future_transactions(cbs, draws_m2, T_star=39.0, seed=42)
-cbs["xstar_m1_pred"] = xstar_m1_draws.mean(axis=0)
-cbs["xstar_m2_pred"] = xstar_m2_draws.mean(axis=0)
+
+# Compute posterior means of λ and μ
+def post_mean_lambdas(draws):
+    all_draws = np.concatenate(draws["level_1"], axis=0)
+    return all_draws[:, :, 0].mean(axis=0)
+
+def post_mean_mus(draws):
+    all_draws = np.concatenate(draws["level_1"], axis=0)
+    return all_draws[:, :, 1].mean(axis=0)
+
+# Closed-form expected x_star for validation
+t_star = 39.0
+mean_lambda_m1 = post_mean_lambdas(draws_m1)
+mean_mu_m1     = post_mean_mus(draws_m1)
+mean_lambda_m2 = post_mean_lambdas(draws_m2)
+mean_mu_m2     = post_mean_mus(draws_m2)
+
+cbs["xstar_m1_pred"] = (mean_lambda_m1/mean_mu_m1) * (1 - np.exp(-mean_mu_m1 * t_star))
+cbs["xstar_m2_pred"] = (mean_lambda_m2/mean_mu_m2) * (1 - np.exp(-mean_mu_m2 * t_star))
 
 # Compare MAE
 mae_m1 = np.mean(np.abs(cbs["x_star"] - cbs["xstar_m1_pred"]))
@@ -188,8 +206,101 @@ print(summary_m1)
 print("Posterior Summary - Model M2 (with covariates):")
 print(summary_m2)
 
-# ------ Construct Table 3 from Abe 2009 (Estimation Results) ------
+# %% 6. Construct Table 2: Model Fit Evaluation
+# ------ Construct Table 2: Model Fit Evaluation ------
 
+# Validation correlation (individual-level)
+corr_val_m1 = np.corrcoef(cbs["x_star"], cbs["xstar_m1_pred"])[0, 1]
+corr_val_m2 = np.corrcoef(cbs["x_star"], cbs["xstar_m2_pred"])[0, 1]
+
+# Calibration correlation (actual = x, predicted = model expectation using posterior mean of λ and μ)
+calib_pred_m1 = (mean_lambda_m1 / mean_mu_m1) * (1 - np.exp(-mean_mu_m1 * cbs["T_cal"]))
+calib_pred_m2 = (mean_lambda_m2 / mean_mu_m2) * (1 - np.exp(-mean_mu_m2 * cbs["T_cal"]))
+corr_calib_m1 = np.corrcoef(cbs["x"], calib_pred_m1)[0, 1]
+corr_calib_m2 = np.corrcoef(cbs["x"], calib_pred_m2)[0, 1]
+
+
+# ------ Weekly-aggregated MAPE as in Abe (2009) ------
+def weekly_mape(actual, pred):
+    mask = actual > 0
+    return np.mean(np.abs((actual[mask] - pred[mask]) / actual[mask])) * 100
+
+# Anchor weeks at the start of the dataset
+cal_start_date = cdnowElog["date"].min()
+cdnowElog["week_idx"] = ((cdnowElog["date"] - cal_start_date) // pd.Timedelta("7D")).astype(int) + 1
+
+cal_weeks = int(t_star)
+val_weeks = int(t_star)
+
+# Actual weekly counts for calibration
+actual_cal = (
+    cdnowElog[cdnowElog["week_idx"] <= cal_weeks]
+    .groupby("week_idx")["cust"]
+    .count()
+    .reindex(range(1, cal_weeks+1), fill_value=0)
+    .to_numpy()
+)
+# Predicted weekly counts for calibration
+weeks_cal = np.arange(1, cal_weeks+1)
+inc_cal_m1 = (mean_lambda_m1[:, None] / mean_mu_m1[:, None]) * (
+    np.exp(-mean_mu_m1[:, None] * (weeks_cal - 1))
+    - np.exp(-mean_mu_m1[:, None] * weeks_cal)
+)
+pred_cal_m1 = inc_cal_m1.sum(axis=0)
+inc_cal_m2 = (mean_lambda_m2[:, None] / mean_mu_m2[:, None]) * (
+    np.exp(-mean_mu_m2[:, None] * (weeks_cal - 1))
+    - np.exp(-mean_mu_m2[:, None] * weeks_cal)
+)
+pred_cal_m2 = inc_cal_m2.sum(axis=0)
+
+# Actual weekly counts for validation
+actual_val = (
+    cdnowElog[(cdnowElog["week_idx"] > cal_weeks) & (cdnowElog["week_idx"] <= cal_weeks+val_weeks)]
+    .groupby("week_idx")["cust"]
+    .count()
+    .reindex(range(cal_weeks+1, cal_weeks+val_weeks+1), fill_value=0)
+    .to_numpy()
+)
+# Predicted weekly counts for validation
+weeks_val = np.arange(cal_weeks+1, cal_weeks+val_weeks+1)
+inc_val_m1 = (mean_lambda_m1[:, None] / mean_mu_m1[:, None]) * (
+    np.exp(-mean_mu_m1[:, None] * (weeks_val-1))
+    - np.exp(-mean_mu_m1[:, None] * weeks_val)
+)
+pred_val_m1 = inc_val_m1.sum(axis=0)
+inc_val_m2 = (mean_lambda_m2[:, None] / mean_mu_m2[:, None]) * (
+    np.exp(-mean_mu_m2[:, None] * (weeks_val-1))
+    - np.exp(-mean_mu_m2[:, None] * weeks_val)
+)
+pred_val_m2 = inc_val_m2.sum(axis=0)
+
+# Compute weekly MAPE
+mape_cal_m1 = weekly_mape(actual_cal, pred_cal_m1)
+mape_cal_m2 = weekly_mape(actual_cal, pred_cal_m2)
+mape_val_m1 = weekly_mape(actual_val, pred_val_m1)
+mape_val_m2 = weekly_mape(actual_val, pred_val_m2)
+# Pooled
+actual_pooled = np.concatenate([actual_cal, actual_val])
+pred_pooled_m1 = np.concatenate([pred_cal_m1, pred_val_m1])
+pred_pooled_m2 = np.concatenate([pred_cal_m2, pred_val_m2])
+mape_pooled_m1 = weekly_mape(actual_pooled, pred_pooled_m1)
+mape_pooled_m2 = weekly_mape(actual_pooled, pred_pooled_m2)
+
+# Construct Table 2 with weekly-aggregated MAPE
+table2 = pd.DataFrame({
+    "HB M1": [corr_val_m1, corr_calib_m1, mse_val_m1, mse_calib_m1, mape_val_m1, mape_cal_m1, mape_pooled_m1],
+    "HB M2": [corr_val_m2, corr_calib_m2, mse_val_m2, mse_calib_m2, mape_val_m2, mape_cal_m2, mape_pooled_m2]
+}, index=[
+    "Correlation (Validation)", "Correlation (Calibration)",
+    "MSE (Validation)", "MSE (Calibration)",
+    "MAPE (Validation)", "MAPE (Calibration)", "MAPE (Pooled)"
+])
+
+with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+    table2.to_excel(writer, sheet_name="Table 2")
+
+# %% 7. Construct Table 3: Estimation Results
+# ------ Construct Table 3 from Abe 2009 (Estimation Results) ------
 # --- Compute correlation between log_lambda and log_mu from posterior (for both models) ---
 def extract_correlation(draws_level2):
     cov = draws_level2[:, -2]  # cov_log_lambda_mu
@@ -258,18 +369,66 @@ table3_combined = pd.concat([table3_combined, correlation_row, loglik_row])
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table3_combined.to_excel(writer, sheet_name="Table 3")
 
+# %% 8. Construct Table 4: Customer-Level Statistics
+# ------ Construct Table 4: Customer-Level Statistics ------
+def compute_table4(draws, xstar_draws):
+    # Average over all level_1 draws from all chains
+    all_draws = np.concatenate(draws["level_1"], axis=0)  # shape: (n_draws, n_customers, 4)
+    
+    # Compute posterior means across all draws for each parameter
+    mean_lambda = all_draws[:, :, 0].mean(axis=0)
+    mean_mu = all_draws[:, :, 1].mean(axis=0)
+    mean_z = all_draws[:, :, 3].mean(axis=0)
+    # Expected x_star based on Equation (8) from Abe (2009), with t = 39 weeks
+    t_star = 39
+    mean_xstar = mean_lambda / mean_mu * (1 - np.exp(-mean_mu * t_star))
+
+    # Formula (9): Expected lifetime = 1 / μ
+    mean_lifetime = np.where(mean_mu > 0, 1.0 / mean_mu, np.inf)
+
+    # Formula (10): 1-year survival rate = exp(-52 * μ), where 52 weeks = 1 year
+    surv_1yr = np.exp(-mean_mu * 52)
+
+    # Compute posterior percentiles for each parameter
+    lambda_draws = all_draws[:, :, 0]
+    mu_draws = all_draws[:, :, 1]
+
+    lambda_2_5 = np.percentile(lambda_draws, 2.5, axis=0)
+    lambda_97_5 = np.percentile(lambda_draws, 97.5, axis=0)
+    mu_2_5 = np.percentile(mu_draws, 2.5, axis=0)
+    mu_97_5 = np.percentile(mu_draws, 97.5, axis=0)
+
+    df = pd.DataFrame({
+        "Mean(λ)": mean_lambda,
+        "2.5% tile λ": lambda_2_5,
+        "97.5% tile λ": lambda_97_5,
+        "Mean(μ)": mean_mu,
+        "2.5% tile μ": mu_2_5,
+        "97.5% tile μ": mu_97_5,
+        "Mean exp lifetime (yrs)": mean_lifetime,
+        "Survival rate (1yr)": surv_1yr,
+        "P(alive at T_cal)": mean_z,
+        "Exp # of trans in val period": mean_xstar
+    })
+    df.index.name = "Customer ID"
+    return df.round(3)
+
+table4 = compute_table4(draws_m2, xstar_m2_draws)
+
+# Save both new tables
+with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+    table4.to_excel(writer, sheet_name="Table 4")
 
 
-cbs["xstar_m2_pred"].describe()
 
-cbs["x_star"].value_counts()
 
-print("xstar_m2_draws.shape:", xstar_m2_draws.shape)
-print("xstar_m2_pred stats:", cbs["xstar_m2_pred"].describe())
 
-cbs["first.sales_scaled"].describe()
 
-# ------------ Additional visualizations and diagnostics ------------
+
+
+
+
+# %% ------------ Additional visualizations and diagnostics ------------
 
 # 6. Create scatterplots to visualize the predictions of both models
 sns.set(style="whitegrid")

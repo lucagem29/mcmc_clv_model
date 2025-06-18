@@ -331,7 +331,9 @@ def _draw_level_1(
         log_mu[accept]     = prop_lm[accept]
         cur_lp[accept]     = prop_lp[accept]
 
-    return np.exp(log_lambda), np.exp(log_mu)
+    lambdas = np.exp(log_lambda)
+    mus = np.exp(log_mu)
+    return lambdas, mus
 
 
 # -----------------------------------------------------------------------------
@@ -396,6 +398,9 @@ def _run_chain(
         # store draws after burn‑in / thinning
         if step > burnin and (step - 1 - burnin) % thin == 0:
             store_idx += 1
+            # Correction safeguard: ensure lambdas and mus are in natural scale
+            lambdas = np.exp(np.log(lambdas))
+            mus = np.exp(np.log(mus))
             lvl1_draws[store_idx, :, 0] = lambdas
             lvl1_draws[store_idx, :, 1] = mus
             lvl1_draws[store_idx, :, 2] = tau
@@ -527,17 +532,13 @@ def draw_future_transactions(cbs: pd.DataFrame, draws: Dict[str, Any], T_star: f
             z = draw[:, 3] > 0.5  # Convert to boolean
 
             T_cal = cbs["T_cal"].to_numpy()
+            tau_star = np.full_like(T_cal, T_star, dtype=float)
+            # For churned customers, tau_star is min(tau - T_cal, T_star)
+            tau_star[~z] = np.clip(tau[~z] - T_cal[~z], 0.0, T_star)
 
-            # For alive customers: Poisson distributed with T_star * λ
-            x_alive = rng.poisson(lambdas * T_star)
-
-            # For churned customers: Poisson with (τ - T_cal) * λ, capped at T_star
-            time_churned = np.clip(tau - T_cal, 0.0, T_star)
-            x_churned = rng.poisson(lambdas * time_churned)
-
-            # Combine predictions
-            x = np.where(z, x_alive, x_churned)
-            x_stars.append(x)
+            # Poisson sampling for all customers using lam=lambdas * tau_star
+            x_draws = rng.poisson(lam=lambdas * tau_star)
+            x_stars.append(x_draws)
 
     return np.array(x_stars)  # shape: (n_draws, n_customers)
 
