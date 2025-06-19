@@ -1,5 +1,7 @@
 # Ignore output files
-Estimation/
+Estimation/*.xlsx
+Estimation/*.csv
+!Estimation/*.png
 *.xlsx
 *.csv
 
