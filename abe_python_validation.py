@@ -7,6 +7,8 @@ import seaborn as sns
 import arviz as az
 import os
 from openpyxl import load_workbook
+# Add lifetimes ParetoNBDFitter for MLE baseline
+from lifetimes import ParetoNBDFitter
 
 # Import functions 
 # Import custom modules for data processing
@@ -214,10 +216,17 @@ corr_val_m1 = np.corrcoef(cbs["x_star"], cbs["xstar_m1_pred"])[0, 1]
 corr_val_m2 = np.corrcoef(cbs["x_star"], cbs["xstar_m2_pred"])[0, 1]
 
 # Calibration correlation (actual = x, predicted = model expectation using posterior mean of λ and μ)
+
 calib_pred_m1 = (mean_lambda_m1 / mean_mu_m1) * (1 - np.exp(-mean_mu_m1 * cbs["T_cal"]))
 calib_pred_m2 = (mean_lambda_m2 / mean_mu_m2) * (1 - np.exp(-mean_mu_m2 * cbs["T_cal"]))
 corr_calib_m1 = np.corrcoef(cbs["x"], calib_pred_m1)[0, 1]
 corr_calib_m2 = np.corrcoef(cbs["x"], calib_pred_m2)[0, 1]
+
+# Compute MSE
+mse_val_m1 = np.mean((cbs["x_star"] - cbs["xstar_m1_pred"])**2)
+mse_val_m2 = np.mean((cbs["x_star"] - cbs["xstar_m2_pred"])**2)
+mse_calib_m1 = np.mean((cbs["x"] - calib_pred_m1)**2)
+mse_calib_m2 = np.mean((cbs["x"] - calib_pred_m2)**2)
 
 
 # ------ Weekly-aggregated MAPE as in Abe (2009) ------
@@ -371,6 +380,10 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
 
 # %% 8. Construct Table 4: Customer-Level Statistics
 # ------ Construct Table 4: Customer-Level Statistics ------
+# Generate posterior predictive draws for validation period
+xstar_m1_draws = draw_future_transactions(cbs, draws_m1, T_star=t_star, seed=42)
+xstar_m2_draws = draw_future_transactions(cbs, draws_m2, T_star=t_star, seed=42)
+
 def compute_table4(draws, xstar_draws):
     # Average over all level_1 draws from all chains
     all_draws = np.concatenate(draws["level_1"], axis=0)  # shape: (n_draws, n_customers, 4)
@@ -420,6 +433,108 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
     table4.to_excel(writer, sheet_name="Table 4")
 
 
+# %% Figures 2–5: Reproduce Abe (2009) plots
+
+import matplotlib.pyplot as plt
+
+# Prepare weekly index and counts
+first_date = cdnowElog["date"].min()
+cdnowElog["week"] = ((cdnowElog["date"] - first_date) // pd.Timedelta("7D")).astype(int) + 1
+max_week = cdnowElog["week"].max()
+
+# Fit classical Pareto/NBD by maximum likelihood
+pnbd_mle = ParetoNBDFitter(penalizer_coef=0.0)
+pnbd_mle.fit(
+    frequency=cbs["x"],
+    recency=cbs["t_x"],
+    T=cbs["T_cal"]
+)
+
+# Figure 2: Weekly cumulative repeat transactions
+weekly_actual = cdnowElog.groupby("week")["cust"].count().reindex(range(1, max_week+1), fill_value=0)
+cum_actual = weekly_actual.cumsum()
+
+# True Pareto/NBD (MLE) expected cumulative transactions (aggregated)
+times = np.arange(1, max_week+1)
+# expected cumulative purchases per customer at each t
+per_cust_pnbd = np.array([
+    pnbd_mle.expected_number_of_purchases_up_to_time(t) for t in times
+])
+# multiply by number of customers to get group-level cumulative
+cum_pnbd_ml = per_cust_pnbd * len(cbs)
+
+# HB model cumulative
+inc_hb = (mean_lambda_m2[:, None]/mean_mu_m2[:, None]) * (
+    np.exp(-mean_mu_m2[:, None]*(times-1)) - np.exp(-mean_mu_m2[:, None]*times)
+)
+cum_hb = inc_hb.sum(axis=0).cumsum()
+
+plt.figure(figsize=(8,5))
+plt.plot(times, cum_actual, '-', color='tab:blue', linewidth=2, label="Actual")
+plt.plot(times, cum_pnbd_ml, '--', color='tab:orange', linewidth=2, label="Pareto/NBD (MLE)")
+plt.plot(times, cum_hb, ':', color='tab:green', linewidth=2, label="HB")
+plt.axvline(x=int(t_star), color='k', linestyle='--')
+plt.xlabel("Week")
+plt.ylabel("Cumulative repeat transactions")
+plt.title("Figure 2: Weekly Time-Series Tracking for CDNOW Data")
+plt.legend()
+plt.savefig(os.path.join("Estimation","Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
+plt.show()
+
+#
+# Figure 3: Conditional expectation of future transactions
+# Group by number of calibration transactions (0–7+)
+# Updated to use Pareto/NBD baseline with Model M1 posterior means
+df = pd.DataFrame({
+    "x": cbs["x"],
+    "actual": cbs["x_star"],
+    "pnbd": (mean_lambda_m1/mean_mu_m1)*(1-np.exp(-mean_mu_m1*cbs["T_cal"])),
+    "hb": cbs["xstar_m2_pred"]
+})
+groups = []
+for k in range(7):
+    grp = df[df["x"]==k]
+    groups.append((str(k), grp["actual"].mean(), grp["pnbd"].mean(), grp["hb"].mean()))
+grp7 = df[df["x"]>=7]
+groups.append(("7+", grp7["actual"].mean(), grp7["pnbd"].mean(), grp7["hb"].mean()))
+cond_df = pd.DataFrame(groups, columns=["x","Actual","Pareto/NBD","HB"]).set_index("x")
+
+plt.figure(figsize=(8,5))
+plt.plot(cond_df.index, cond_df["Actual"], '-', color='tab:blue', linewidth=2, label="Actual")
+plt.plot(cond_df.index, cond_df["Pareto/NBD"], marker='*', linestyle='--', color='tab:orange', linewidth=2, label="Pareto/NBD")
+plt.plot(cond_df.index, cond_df["HB"], marker='x', linestyle=':', color='tab:green', linewidth=2, label="HB")
+plt.xlabel("Number of transactions in weeks 1–39")
+plt.ylabel("Average transactions in weeks 40–78")
+plt.title("Figure 3: Conditional Expectation of Future Transactions for CDNOW Data")
+plt.legend()
+plt.savefig(os.path.join("Estimation","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
+plt.show()
+
+# Figure 4: Scatter plot of posterior means of λ and μ
+plt.figure(figsize=(6,6))
+plt.scatter(mean_lambda_m2, mean_mu_m2, alpha=0.3)
+plt.xlabel("λ")
+plt.ylabel("μ")
+plt.title("Figure 4: Scatter Plot of Posterior Means of λ and μ for CDNOW Data")
+plt.savefig(os.path.join("Estimation","Figure4_scatter_lambda_mu.png"), dpi=300, bbox_inches='tight')
+plt.show()
+
+# Figure 5: Histogram of correlation between log(λ) and log(μ)
+# Compute correlation draws from level_2
+corr_draws = []
+for chain in draws_m2["level_2"]:
+    for draw in chain:
+        cov = draw[-2]; var_l = draw[-3]; var_m = draw[-1]
+        corr_draws.append(cov/np.sqrt(var_l*var_m))
+plt.figure(figsize=(8,4))
+plt.hist(corr_draws, bins=20, edgecolor='k')
+plt.xlabel("Correlation")
+plt.ylabel("Frequency")
+plt.title("Figure 5: Distribution of Correlation Between log(λ) and log(μ) for CDNOW Data")
+plt.savefig(os.path.join("Estimation","Figure5_corr_histogram.png"), dpi=300, bbox_inches='tight')
+plt.show()
+
+
 
 
 
@@ -454,6 +569,7 @@ for ax in axes:
     ax.grid(False)
 
 plt.tight_layout()
+plt.savefig(os.path.join("Estimation","Scatter_M1_M2.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # 7. Visualize the predicted alive vs. churned customers
@@ -475,6 +591,7 @@ bars = ax.bar(labels, counts, color=colors, width=0.5)
 ax.set_ylabel("Number of customers", fontsize=11)
 ax.set_title("Predicted Alive vs. Churned\n(Last Draw of MCMC Chain)", fontsize=13)
 
+
 # Annotate each bar with its value
 for bar in bars:
     height = bar.get_height()
@@ -487,16 +604,21 @@ for bar in bars:
         fontsize=10
     )
 
+# Disable grid lines so they don’t appear behind annotations
+ax.grid(False)
+
 # Clean up the axis appearance
 ax.spines['right'].set_visible(False)
 ax.spines['top'].set_visible(False)
-ax.spines['left'].set_color('#999999')
+# Hide the vertical left spine so it doesn’t bisect the first bar
+ax.spines['left'].set_visible(False)
 ax.spines['bottom'].set_color('#999999')
 ax.tick_params(axis='y', colors='#444444')
 ax.tick_params(axis='x', colors='#444444')
 
 # Final layout adjustment
 plt.tight_layout()
+plt.savefig(os.path.join("Estimation","Alive_vs_Churned.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # 8. Visualize the posterior distributions and traceplots for both models
@@ -588,3 +710,4 @@ fig = az.plot_posterior(
 plt.suptitle("Posterior Distributions - M2", fontsize=16, y=1.02)
 plt.subplots_adjust(hspace=0.5)
 plt.show()
+# %%
