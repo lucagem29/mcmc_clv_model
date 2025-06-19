@@ -73,7 +73,7 @@ Abe_2009_model_implementation/
 ### Figure 5: Distribution of log(λ)–log(μ) Correlations
 ![Figure 5](Estimation/Figure5_corr_histogram.png)
 
-### Scatter: Actual vs. Predicted x_star (M1 vs. M2)
+### Actual vs. Predicted x_star (M1 vs. M2)
 ![Scatter M1 vs M2](Estimation/Scatter_M1_M2.png)
 
 ### Predicted Alive vs. Churned Customers
