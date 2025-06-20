@@ -159,22 +159,21 @@ summary_m2 = summary_m2.drop(index="MAE", errors="ignore")
 
 # Rename indices to match Table 3 from the paper
 summary_m1.index = [
-    "Purchase rate log(lambda) Intercept",
-    "Dropout rate log(mu) Intercept",
-    "sigma^2_lambda = var[log lambda]",
-    "sigma^2_mu = var[log mu]",
-    "sigma_lambda_mu = cov[log lambda, log mu]"
+    "Purchase rate log(λ) - Intercept",
+    "Dropout rate log(μ) - Intercept",
+    "sigma^2_λ = var[log λ]",
+    "sigma^2_μ = var[log μ]",
+    "sigma_λ_μ = cov[log λ, log μ]"
 ]
 summary_m2.index = [
-    "Purchase rate log(lambda) Intercept",
-    "Purchase rate log(lambda) Initial amount ($ 10^-3)",
-    "Dropout rate log(mu) Intercept",
-    "Dropout rate log(mu) Initial amount ($ 10^-3)",
-    "sigma^2_lambda = var[log lambda]",
-    "sigma^2_mu = var[log mu]",
-    "sigma_lambda_mu = cov[log lambda, log mu]"
+    "Purchase rate log(λ) - Intercept",
+    "Purchase rate log(λ) - Initial amount ($ 10^-3)",
+    "Dropout rate log(μ) - Intercept",
+    "Dropout rate log(μ) - Initial amount ($ 10^-3)",
+    "sigma^2_λ = var[log λ]",
+    "sigma^2_μ = var[log μ]",
+    "sigma_λ_μ = cov[log λ, log μ]"
 ]
-
 
 # Compute posterior means of λ and μ
 def post_mean_lambdas(draws):
@@ -347,13 +346,13 @@ summary_m2_cleaned = summary_m2.copy()
 
 # Align the summaries vertically with correct row structure
 row_labels = [
-    "Purchase rate log(lambda) Intercept",
-    "Purchase rate log(lambda) Initial amount ($ 10^-3)",
-    "Dropout rate log(mu) Intercept",
-    "Dropout rate log(mu) Initial amount ($ 10^-3)",
-    "sigma^2_lambda = var[log lambda]",
-    "sigma^2_mu = var[log mu]",
-    "sigma_lambda_mu = cov[log lambda, log mu]"
+    "Purchase rate log(λ) - Intercept",
+    "Purchase rate log(λ) - Initial amount ($ 10^-3)",
+    "Dropout rate log(μ) - Intercept",
+    "Dropout rate log(μ) - Initial amount ($ 10^-3)",
+    "sigma^2_λ = var[log λ]",
+    "sigma^2_μ = var[log μ]",
+    "sigma_λ_μ = cov[log λ, log μ]"
 ]
 
 # Create placeholder rows for missing M1 covariates
@@ -434,9 +433,6 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
 
 
 # %% Figures 2–5: Reproduce Abe (2009) plots
-
-import matplotlib.pyplot as plt
-
 # Prepare weekly index and counts
 first_date = cdnowElog["date"].min()
 cdnowElog["week"] = ((cdnowElog["date"] - first_date) // pd.Timedelta("7D")).astype(int) + 1
