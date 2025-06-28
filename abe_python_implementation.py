@@ -512,12 +512,37 @@ plt.show()
 
 # %% Figure 3: Conditional expectation of future transactions
 # Group by number of calibration transactions (0–7+)
-# Updated to use Pareto/NBD baseline with Model M1 posterior means
+# Use analytical expectations, with different formulas for Pareto/NBD (M1) and HB (M2)
+
+# Expected future repeats for Figure 3:
+all_draws_m1 = np.concatenate(draws_m1["level_1"], axis=0)
+all_draws_m2 = np.concatenate(draws_m2["level_1"], axis=0)
+
+mean_lambda_m1_cust = all_draws_m1[:, :, 0].mean(axis=0)
+mean_mu_m1_cust     = all_draws_m1[:, :, 1].mean(axis=0)
+mean_z_m1_cust      = all_draws_m1[:, :, 3].mean(axis=0)
+
+mean_lambda_m2_cust = all_draws_m2[:, :, 0].mean(axis=0)
+mean_mu_m2_cust     = all_draws_m2[:, :, 1].mean(axis=0)
+mean_z_m2_cust      = all_draws_m2[:, :, 3].mean(axis=0)
+
+#
+# Classical Pareto/NBD (MLE) expected future repeats for the next 39 weeks
+exp_xstar_m1 = pnbd_mle.conditional_expected_number_of_purchases_up_to_time(
+    t_star,
+    cbs["x"],
+    cbs["t_x"],
+    cbs["T_cal"]
+)
+
+# HB expectation (Model M2) – include posterior P(alive)
+exp_xstar_m2 = mean_z_m2_cust * (mean_lambda_m2_cust / mean_mu_m2_cust) * (1 - np.exp(-mean_mu_m2_cust * t_star))
+
 df = pd.DataFrame({
-    "x": cbs["x"],
+    "x":      cbs["x"],
     "actual": cbs["x_star"],
-    "pnbd": (mean_lambda_m1/mean_mu_m1)*(1-np.exp(-mean_mu_m1*cbs["T_cal"])),
-    "hb": cbs["xstar_m2_pred"]
+    "pnbd":   exp_xstar_m1,   # Pareto/NBD expectation (no P(alive))
+    "hb":     exp_xstar_m2    # HB expectation (with P(alive))
 })
 groups = []
 for k in range(7):
@@ -538,28 +563,43 @@ plt.legend()
 plt.savefig(os.path.join("Estimation","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
-# %% Figure 4: Scatter plot of posterior means of λ and μ
-plt.figure(figsize=(6,6))
-plt.scatter(mean_lambda_m2, mean_mu_m2, alpha=0.3)
-plt.xlabel("λ")
-plt.ylabel("μ")
+# %% Figure 4: Scatter plot of posterior means of λ and μ  (HB‑M1, paper style)
+mean_lambda_m1 = post_mean_lambdas(draws_m1)
+mean_mu_m1     = post_mean_mus(draws_m1)
+
+plt.figure(figsize=(6, 6))
+plt.scatter(mean_lambda_m1, mean_mu_m1, s=8, alpha=0.25, color="tab:blue")
+plt.xlim(0, 4)
+plt.ylim(0, 0.14)
+plt.xlabel(r"$\lambda$")
+plt.ylabel(r"$\mu$")
 plt.title("Figure 4: Scatter Plot of Posterior Means of λ and μ for CDNOW Data")
-plt.savefig(os.path.join("Estimation","Figure4_scatter_lambda_mu.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join("Estimation", "Figure4_scatter_lambda_mu.png"),
+            dpi=300, bbox_inches="tight")
 plt.show()
 
 # %% Figure 5: Histogram of correlation between log(λ) and log(μ)
-# Compute correlation draws from level_2
-corr_draws = []
-for chain in draws_m2["level_2"]:
-    for draw in chain:
-        cov = draw[-2]; var_l = draw[-3]; var_m = draw[-1]
-        corr_draws.append(cov/np.sqrt(var_l*var_m))
-plt.figure(figsize=(8,4))
-plt.hist(corr_draws, bins=20, edgecolor='k')
+
+# Flatten level‑2 draws across chains
+level2_all = np.vstack(draws_m2["level_2"])   # shape (total_draws, n_params)
+
+# Column order in draws: [..., var_log_lambda, var_log_mu, cov_log_lambda_mu]
+var_l = level2_all[:, -3]   # sigma^2_lambda
+cov   = level2_all[:, -2]   # cov_log_lambda_mu
+var_m = level2_all[:, -1]   # sigma^2_mu
+
+# Keep draws with strictly positive variances
+mask = (var_l > 0) & (var_m > 0)
+corr_draws = cov[mask] / np.sqrt(var_l[mask] * var_m[mask])
+
+plt.figure(figsize=(8, 4))
+plt.hist(corr_draws, bins=30, edgecolor="k")
+plt.xlim(-0.3, 0.4)
 plt.xlabel("Correlation")
 plt.ylabel("Frequency")
 plt.title("Figure 5: Distribution of Correlation Between log(λ) and log(μ) for CDNOW Data")
-plt.savefig(os.path.join("Estimation","Figure5_corr_histogram.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join("Estimation", "Figure5_corr_histogram.png"),
+            dpi=300, bbox_inches="tight")
 plt.show()
 
 
