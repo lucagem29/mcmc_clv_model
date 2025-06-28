@@ -401,9 +401,6 @@ def _run_chain(
         # store draws after burn‑in / thinning
         if step > burnin and (step - 1 - burnin) % thin == 0:
             store_idx += 1
-            # Correction safeguard: ensure lambdas and mus are in natural scale
-            lambdas = np.exp(np.log(lambdas))
-            mus = np.exp(np.log(mus))
             lvl1_draws[store_idx, :, 0] = lambdas
             lvl1_draws[store_idx, :, 1] = mus
             lvl1_draws[store_idx, :, 2] = tau

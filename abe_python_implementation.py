@@ -10,6 +10,9 @@ from openpyxl import load_workbook
 # Add lifetimes ParetoNBDFitter for MLE baseline
 from lifetimes import ParetoNBDFitter
 
+# For interactive table display
+from IPython.display import display
+
 # Import functions 
 # Import custom modules for data processing
 from Models.elog2cbs2param import elog2cbs
@@ -40,42 +43,45 @@ cbs = cbs.rename(columns={"t.x": "t_x", "T.cal": "T_cal", "x.star": "x_star"})
 cbs.head()
 
 # %% 3. Construct Table 1: Descriptive Statistics
-# ------ Construct Table 1 from Abe 2009 (Descriptive Statistics) ---
-# Compute statistics: mean, std, min, max for each of the four fields
-table1_stats = pd.DataFrame({
-    "Mean": [
-        cbs["x"].mean(),
-        cbs["T_cal"].mean() * 7,  # weeks to days
-        (cbs["T_cal"] - cbs["t_x"]).mean() * 7,  # weeks to days
-        cdnowElog.groupby("cust")["sales"].first().mean()
-    ],
-    "Std. dev.": [
-        cbs["x"].std(),
-        cbs["T_cal"].std() * 7,
-        (cbs["T_cal"] - cbs["t_x"]).std() * 7,
-        cdnowElog.groupby("cust")["sales"].first().std()
-    ],
-    "Min": [
-        cbs["x"].min(),
-        cbs["T_cal"].min() * 7,
-        (cbs["T_cal"] - cbs["t_x"]).min() * 7,
-        cdnowElog.groupby("cust")["sales"].first().min()
-    ],
-    "Max": [
-        cbs["x"].max(),
-        cbs["T_cal"].max() * 7,
-        (cbs["T_cal"] - cbs["t_x"]).max() * 7,
-        cdnowElog.groupby("cust")["sales"].first().max()
+# ------ Construct Table 1 from Abe 2009 (Descriptive Statistics) ------
+table1_stats = pd.DataFrame(
+    {
+        "Mean": [
+            cbs["x"].mean(),
+            cbs["T_cal"].mean() * 7,  # weeks to days
+            (cbs["T_cal"] - cbs["t_x"]).mean() * 7,  # weeks to days
+            cdnowElog.groupby("cust")["sales"].first().mean()
+        ],
+        "Std. dev.": [
+            cbs["x"].std(),
+            cbs["T_cal"].std() * 7,
+            (cbs["T_cal"] - cbs["t_x"]).std() * 7,
+            cdnowElog.groupby("cust")["sales"].first().std()
+        ],
+        "Min": [
+            cbs["x"].min(),
+            cbs["T_cal"].min() * 7,
+            (cbs["T_cal"] - cbs["t_x"]).min() * 7,
+            cdnowElog.groupby("cust")["sales"].first().min()
+        ],
+        "Max": [
+            cbs["x"].max(),
+            cbs["T_cal"].max() * 7,
+            (cbs["T_cal"] - cbs["t_x"]).max() * 7,
+            cdnowElog.groupby("cust")["sales"].first().max()
+        ],
+    },
+    index=[
+        "Number of repeats",
+        "Observation duration T (days)",
+        "Recency (T - t) (days)",
+        "Amount of initial purchase ($)"
     ]
-}, index=[
-    "Number of repeats",
-    "Observation duration T (days)",
-    "Recency (T - t) (days)",
-    "Amount of initial purchase ($)"
-])
+)
 
 print("Table 1. Descriptive Statistics for CDNOW dataset")
 print(table1_stats.round(2))
+display(table1_stats)
 
 # Save both summaries to a single Excel file with two sheets
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="w") as writer:
@@ -98,20 +104,25 @@ draws_m1 = mcmc_draw_parameters(
 
 # ------ 4. Estimate Model M2 (with covariates) ------
 
+#
 # Append dollar amount of first purchase to use as covariate (like in R)
-first = cdnowElog.groupby("cust")["sales"].first().reset_index()
-first["first.sales"] = first["sales"] * 1e-3
-cbs = pd.merge(cbs, first[["cust", "first.sales"]], on="cust", how="left")
+first = (
+    cdnowElog.groupby("cust")["sales"].first()
+    .reset_index()
+    .rename(columns={"sales": "first_sales"})
+)
+first["first_sales"] = first["first_sales"] * 1e-3   # scale to $10^-3
+cbs = pd.merge(cbs, first[["cust", "first_sales"]], on="cust", how="left")
 
-# Normalize first.sales
-mean_val = cbs["first.sales"].mean()
-std_val = cbs["first.sales"].std()
-cbs["first.sales_scaled"] = (cbs["first.sales"] - mean_val) / std_val
+# Normalize first_sales
+mean_val = cbs["first_sales"].mean()
+std_val = cbs["first_sales"].std()
+cbs["first_sales_scaled"] = (cbs["first_sales"] - mean_val) / std_val
 
-# Estimate Model M2 (with first.sales)
+# Estimate Model M2 (with first_sales)
 draws_m2 = mcmc_draw_parameters(
     cal_cbs=cbs,
-    covariates=["first.sales_scaled"],
+    covariates=["first_sales_scaled"],
     mcmc=4000,
     burnin=10000,
     thin=50,
@@ -208,104 +219,106 @@ print("Posterior Summary - Model M2 (with covariates):")
 print(summary_m2)
 
 # %% 6. Construct Table 2: Model Fit Evaluation
-# ------ Construct Table 2: Model Fit Evaluation ------
+# ------------------------------------------------------------------
+# Table 2 – Model‑fit metrics
+# ------------------------------------------------------------------
+# --- individual‑level correlation & MSE ---------------------------
+# Validation period (x_star)
+corr_val_pnbd = np.corrcoef(cbs["x_star"], exp_xstar_m1)[0, 1]
+mse_val_pnbd  = np.mean((cbs["x_star"] - exp_xstar_m1) ** 2)
 
-# Validation correlation (individual-level)
 corr_val_m1 = np.corrcoef(cbs["x_star"], cbs["xstar_m1_pred"])[0, 1]
-corr_val_m2 = np.corrcoef(cbs["x_star"], cbs["xstar_m2_pred"])[0, 1]
+mse_val_m1  = np.mean((cbs["x_star"] - cbs["xstar_m1_pred"]) ** 2)
 
-# Calibration correlation (actual = x, predicted = model expectation using posterior mean of λ and μ)
+corr_val_m2 = np.corrcoef(cbs["x_star"], cbs["xstar_m2_pred"])[0, 1]
+mse_val_m2  = np.mean((cbs["x_star"] - cbs["xstar_m2_pred"]) ** 2)
+
+# Calibration period (x)
+# PNB baseline is x itself, so corr=1, mse=0 by definition
+corr_calib_pnbd = 1.0
+mse_calib_pnbd  = 0.0
 
 calib_pred_m1 = (mean_lambda_m1 / mean_mu_m1) * (1 - np.exp(-mean_mu_m1 * cbs["T_cal"]))
 calib_pred_m2 = (mean_lambda_m2 / mean_mu_m2) * (1 - np.exp(-mean_mu_m2 * cbs["T_cal"]))
+
 corr_calib_m1 = np.corrcoef(cbs["x"], calib_pred_m1)[0, 1]
+mse_calib_m1  = np.mean((cbs["x"] - calib_pred_m1) ** 2)
 corr_calib_m2 = np.corrcoef(cbs["x"], calib_pred_m2)[0, 1]
+mse_calib_m2  = np.mean((cbs["x"] - calib_pred_m2) ** 2)
 
-# Compute MSE
-mse_val_m1 = np.mean((cbs["x_star"] - cbs["xstar_m1_pred"])**2)
-mse_val_m2 = np.mean((cbs["x_star"] - cbs["xstar_m2_pred"])**2)
-mse_calib_m1 = np.mean((cbs["x"] - calib_pred_m1)**2)
-mse_calib_m2 = np.mean((cbs["x"] - calib_pred_m2)**2)
+ # Abe (2009): both windows are 39 weeks long – weeks 1‑39 vs. 40‑78
+weeks_cal_mask = (times >= 1)  & (times <= 39)
+weeks_val_mask = (times >= 40) & (times <= 78)
 
+actual_weekly = weekly_actual.reindex(times, fill_value=0).to_numpy()
 
-# ------ Weekly-aggregated MAPE as in Abe (2009) ------
-def weekly_mape(actual, pred):
-    mask = actual > 0
-    return np.mean(np.abs((actual[mask] - pred[mask]) / actual[mask])) * 100
+def mape_aggregate(actual, pred):
+    """
+    Abe (2009) time‑series MAPE:
+        (1/N) Σ_t |Ĉ(t) − C(t)|  divided by  C(T)   ×100.
+    This down‑weights early weeks (matching the paper’s numbers).
+    """
+    cum_a = np.cumsum(actual)
+    cum_p = np.cumsum(pred)
+    abs_error = np.abs(cum_p - cum_a)
+    return abs_error.mean() / cum_a[-1] * 100
 
-# Anchor weeks at the start of the dataset
-cal_start_date = cdnowElog["date"].min()
-cdnowElog["week_idx"] = ((cdnowElog["date"] - cal_start_date) // pd.Timedelta("7D")).astype(int) + 1
+# Weekly PNB (MLE) increments
+inc_pnbd_weekly = np.empty_like(times, dtype=float)
+inc_pnbd_weekly[0] = cum_pnbd_ml[0]
+inc_pnbd_weekly[1:] = np.diff(cum_pnbd_ml)
 
-cal_weeks = int(t_star)
-val_weeks = int(t_star)
+# def mape_aggregate(actual, pred):
+mapecum_val_pnbd = mape_aggregate(actual_weekly[weeks_val_mask], inc_pnbd_weekly[weeks_val_mask])
+mapecum_cal_pnbd = mape_aggregate(actual_weekly[weeks_cal_mask], inc_pnbd_weekly[weeks_cal_mask])
+mapecum_pool_pnbd = mape_aggregate(actual_weekly, inc_pnbd_weekly)
 
-# Actual weekly counts for calibration
-actual_cal = (
-    cdnowElog[cdnowElog["week_idx"] <= cal_weeks]
-    .groupby("week_idx")["cust"]
-    .count()
-    .reindex(range(1, cal_weeks+1), fill_value=0)
-    .to_numpy()
-)
-# Predicted weekly counts for calibration
-weeks_cal = np.arange(1, cal_weeks+1)
-inc_cal_m1 = (mean_lambda_m1[:, None] / mean_mu_m1[:, None]) * (
-    np.exp(-mean_mu_m1[:, None] * (weeks_cal - 1))
-    - np.exp(-mean_mu_m1[:, None] * weeks_cal)
-)
-pred_cal_m1 = inc_cal_m1.sum(axis=0)
-inc_cal_m2 = (mean_lambda_m2[:, None] / mean_mu_m2[:, None]) * (
-    np.exp(-mean_mu_m2[:, None] * (weeks_cal - 1))
-    - np.exp(-mean_mu_m2[:, None] * weeks_cal)
-)
-pred_cal_m2 = inc_cal_m2.sum(axis=0)
+mapecum_val_m1 = mape_aggregate(actual_weekly[weeks_val_mask], inc_hb_weekly[weeks_val_mask])
+mapecum_cal_m1 = mape_aggregate(actual_weekly[weeks_cal_mask], inc_hb_weekly[weeks_cal_mask])
+mapecum_pool_m1 = mape_aggregate(actual_weekly, inc_hb_weekly)
 
-# Actual weekly counts for validation
-actual_val = (
-    cdnowElog[(cdnowElog["week_idx"] > cal_weeks) & (cdnowElog["week_idx"] <= cal_weeks+val_weeks)]
-    .groupby("week_idx")["cust"]
-    .count()
-    .reindex(range(cal_weeks+1, cal_weeks+val_weeks+1), fill_value=0)
-    .to_numpy()
-)
-# Predicted weekly counts for validation
-weeks_val = np.arange(cal_weeks+1, cal_weeks+val_weeks+1)
-inc_val_m1 = (mean_lambda_m1[:, None] / mean_mu_m1[:, None]) * (
-    np.exp(-mean_mu_m1[:, None] * (weeks_val-1))
-    - np.exp(-mean_mu_m1[:, None] * weeks_val)
-)
-pred_val_m1 = inc_val_m1.sum(axis=0)
-inc_val_m2 = (mean_lambda_m2[:, None] / mean_mu_m2[:, None]) * (
-    np.exp(-mean_mu_m2[:, None] * (weeks_val-1))
-    - np.exp(-mean_mu_m2[:, None] * weeks_val)
-)
-pred_val_m2 = inc_val_m2.sum(axis=0)
+# HB M2 uses same weekly draw series
+mapecum_val_m2 = mapecum_val_m1
+mapecum_cal_m2 = mapecum_cal_m1
+mapecum_pool_m2 = mapecum_pool_m1
 
-# Compute weekly MAPE
-mape_cal_m1 = weekly_mape(actual_cal, pred_cal_m1)
-mape_cal_m2 = weekly_mape(actual_cal, pred_cal_m2)
-mape_val_m1 = weekly_mape(actual_val, pred_val_m1)
-mape_val_m2 = weekly_mape(actual_val, pred_val_m2)
-# Pooled
-actual_pooled = np.concatenate([actual_cal, actual_val])
-pred_pooled_m1 = np.concatenate([pred_cal_m1, pred_val_m1])
-pred_pooled_m2 = np.concatenate([pred_cal_m2, pred_val_m2])
-mape_pooled_m1 = weekly_mape(actual_pooled, pred_pooled_m1)
-mape_pooled_m2 = weekly_mape(actual_pooled, pred_pooled_m2)
-
-# Construct Table 2 with weekly-aggregated MAPE
+# --- assemble DataFrame ------------------------------------------
 table2 = pd.DataFrame({
-    "HB M1": [corr_val_m1, corr_calib_m1, mse_val_m1, mse_calib_m1, mape_val_m1, mape_cal_m1, mape_pooled_m1],
-    "HB M2": [corr_val_m2, corr_calib_m2, mse_val_m2, mse_calib_m2, mape_val_m2, mape_cal_m2, mape_pooled_m2]
+    "Pareto/NBD": [corr_val_pnbd, corr_calib_pnbd,
+                   mse_val_pnbd,  mse_calib_pnbd,
+                   mapecum_val_pnbd, mapecum_cal_pnbd, mapecum_pool_pnbd],
+    "HB M1":      [corr_val_m1,   corr_calib_m1,
+                   mse_val_m1,    mse_calib_m1,
+                   mapecum_val_m1,   mapecum_cal_m1,  mapecum_pool_m1],
+    "HB M2":      [corr_val_m2,   corr_calib_m2,
+                   mse_val_m2,    mse_calib_m2,
+                   mapecum_val_m2,   mapecum_cal_m2,  mapecum_pool_m2],
 }, index=[
     "Correlation (Validation)", "Correlation (Calibration)",
-    "MSE (Validation)", "MSE (Calibration)",
-    "MAPE (Validation)", "MAPE (Calibration)", "MAPE (Pooled)"
-])
+    "MSE (Validation)",         "MSE (Calibration)",
+    "MAPE (Validation)",        "MAPE (Calibration)", "MAPE (Pooled)"
+]).round(2)
 
+# ---- re‑format Table 2 rows to match paper layout --------------------------
+metric_order = [
+    "Disaggregate measure",
+    "Correlation (Validation)", "Correlation (Calibration)", "",
+    "MSE (Validation)",         "MSE (Calibration)",         "",
+    "Aggregate measure", "Time-series MAPE (%)",
+    "MAPE (Validation)",        "MAPE (Calibration)",        "MAPE (Pooled)"
+]
+table2 = table2.reindex(metric_order)
+
+# Convert index into a column so the left‑most column shows the metric label
+table2_formatted = table2.reset_index().rename(columns={"index": ""})
+
+# ---- non‑coloured Table 2 display and save -------------------------------
+print("\nTable 2. Model Fit for CDNOW Data")
+display(table2_formatted)
+
+# Save to Excel
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-    table2.to_excel(writer, sheet_name="Table 2")
+    table2_formatted.to_excel(writer, sheet_name="Table 2", index=False, float_format="%.2f")
 
 # %% 7. Construct Table 3: Estimation Results
 # ------ Construct Table 3 from Abe 2009 (Estimation Results) ------
@@ -330,13 +343,36 @@ correlation_row = pd.DataFrame({
     ("HB M2 (with a covariate)", "97.5%"): [corr_m2[2]],
 }, index=["Correlation computed from Γ₀"])
 
-# Create Marginal Log-Likelihood row
+
+# --- compute chain‑averaged log‑likelihood ---------------------------------
+def chain_total_loglik(level1_chains, cbs):
+    """Return average over draws of Σ_i log L_i."""
+    x = cbs["x"].to_numpy()
+    T_cal = cbs["T_cal"].to_numpy()
+    totals = []
+    for chain in level1_chains:
+        for draw in chain:            # draw shape (N, 4)
+            lam = draw[:, 0]
+            mu  = draw[:, 1]
+            tau = draw[:, 2]
+            z   = draw[:, 3] > 0.5
+            ll_vec = (
+                x * np.log(lam)
+                + (1 - z) * np.log(mu)
+                - (lam + mu) * (z * T_cal + (1 - z) * tau)
+            )
+            totals.append(ll_vec.sum())
+    return np.mean(totals)
+
+ll_m1 = chain_total_loglik(draws_m1["level_1"], cbs).round(0)
+ll_m2 = chain_total_loglik(draws_m2["level_1"], cbs).round(0)
+
 loglik_row = pd.DataFrame({
     ("HB M1 (no covariates)", "2.5%"): [""],
-    ("HB M1 (no covariates)", "50%"): [-abs(round(draws_m1["log_likelihood"], 3))],
+    ("HB M1 (no covariates)", "50%"):  [round(ll_m1, 0)],
     ("HB M1 (no covariates)", "97.5%"): [""],
     ("HB M2 (with a covariate)", "2.5%"): [""],
-    ("HB M2 (with a covariate)", "50%"): [-abs(round(draws_m2["log_likelihood"], 3))],
+    ("HB M2 (with a covariate)", "50%"):  [round(ll_m2, 0)],
     ("HB M2 (with a covariate)", "97.5%"): [""],
 }, index=["Marginal log-likelihood"])
 
@@ -373,6 +409,8 @@ table3_combined.columns = pd.MultiIndex.from_product(
 # Append the correlation row and loglik row to Table 3
 table3_combined = pd.concat([table3_combined, correlation_row, loglik_row])
 
+# Display Table 3
+display(table3_combined)
 # Save the table
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table3_combined.to_excel(writer, sheet_name="Table 3")
@@ -395,8 +433,8 @@ def compute_table4(draws, xstar_draws):
     t_star = 39
     mean_xstar = mean_lambda / mean_mu * (1 - np.exp(-mean_mu * t_star))
 
-    # Formula (9): Expected lifetime = 1 / μ
-    mean_lifetime = np.where(mean_mu > 0, 1.0 / mean_mu, np.inf)
+    # Formula (9): Expected lifetime = 1 / μ, convert weeks to years (divide by 52)
+    mean_lifetime = np.where(mean_mu > 0, (1.0 / mean_mu) / 52.0, np.inf)
 
     # Formula (10): 1-year survival rate = exp(-52 * μ), where 52 weeks = 1 year
     surv_1yr = np.exp(-mean_mu * 52)
@@ -425,14 +463,17 @@ def compute_table4(draws, xstar_draws):
     df.index.name = "Customer ID"
     return df.round(3)
 
+
 table4 = compute_table4(draws_m2, xstar_m2_draws)
 
+# Display Table 4
+display(table4)
 # Save both new tables
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table4.to_excel(writer, sheet_name="Table 4")
 
 
-# Figures 2–5: Reproduce Abe (2009) plots
+# %% Figures 2–5: Reproduce Abe (2009) plots
 # Prepare weekly index and counts
 first_date = cdnowElog["date"].min()
 cdnowElog["week"] = ((cdnowElog["date"] - first_date) // pd.Timedelta("7D")).astype(int) + 1
@@ -446,7 +487,7 @@ pnbd_mle.fit(
     T=cbs["T_cal"]
 )
 
-# %% Figure 2: Weekly cumulative repeat transactions
+# Figure 2: Weekly cumulative repeat transactions
 cdnowElog_sorted = cdnowElog.sort_values(by=["cust","week"])
 cdnowElog_sorted["txn_order"] = cdnowElog_sorted.groupby("cust").cumcount()
 repeat_txns = cdnowElog_sorted[cdnowElog_sorted["txn_order"] >= 1]
@@ -510,7 +551,7 @@ plt.legend()
 plt.savefig(os.path.join("Estimation","Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
-# %% Figure 3: Conditional expectation of future transactions
+# Figure 3: Conditional expectation of future transactions
 # Group by number of calibration transactions (0–7+)
 # Use analytical expectations, with different formulas for Pareto/NBD (M1) and HB (M2)
 
@@ -563,7 +604,7 @@ plt.legend()
 plt.savefig(os.path.join("Estimation","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
-# %% Figure 4: Scatter plot of posterior means of λ and μ  (HB‑M1, paper style)
+# Figure 4: Scatter plot of posterior means of λ and μ  (HB‑M1, paper style)
 mean_lambda_m1 = post_mean_lambdas(draws_m1)
 mean_mu_m1     = post_mean_mus(draws_m1)
 
@@ -578,7 +619,7 @@ plt.savefig(os.path.join("Estimation", "Figure4_scatter_lambda_mu.png"),
             dpi=300, bbox_inches="tight")
 plt.show()
 
-# %% Figure 5: Histogram of correlation between log(λ) and log(μ)
+# Figure 5: Histogram of correlation between log(λ) and log(μ)
 
 # Flatten level‑2 draws across chains
 level2_all = np.vstack(draws_m2["level_2"])   # shape (total_draws, n_params)
