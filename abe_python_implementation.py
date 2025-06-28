@@ -12,10 +12,10 @@ from lifetimes import ParetoNBDFitter
 
 # Import functions 
 # Import custom modules for data processing
-from Models.elog2cbs import elog2cbs
+from Models.elog2cbs2param import elog2cbs
 
 # Import custom modules for model estimation and prediction
-from Models.pareto_abe_manual import (
+from Models.model_abe_2009_two_param import (
     mcmc_draw_parameters,
     draw_future_transactions
 )
@@ -432,7 +432,7 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
     table4.to_excel(writer, sheet_name="Table 4")
 
 
-# %% Figures 2–5: Reproduce Abe (2009) plots
+# Figures 2–5: Reproduce Abe (2009) plots
 # Prepare weekly index and counts
 first_date = cdnowElog["date"].min()
 cdnowElog["week"] = ((cdnowElog["date"] - first_date) // pd.Timedelta("7D")).astype(int) + 1
@@ -446,24 +446,57 @@ pnbd_mle.fit(
     T=cbs["T_cal"]
 )
 
-# Figure 2: Weekly cumulative repeat transactions
-weekly_actual = cdnowElog.groupby("week")["cust"].count().reindex(range(1, max_week+1), fill_value=0)
+# %% Figure 2: Weekly cumulative repeat transactions
+cdnowElog_sorted = cdnowElog.sort_values(by=["cust","week"])
+cdnowElog_sorted["txn_order"] = cdnowElog_sorted.groupby("cust").cumcount()
+repeat_txns = cdnowElog_sorted[cdnowElog_sorted["txn_order"] >= 1]
+weekly_actual = (
+    repeat_txns.groupby("week")["cust"].count()
+    .reindex(range(1, max_week+1), fill_value = 0))
+
+# Cumulative actual transactions
 cum_actual = weekly_actual.cumsum()
 
-# True Pareto/NBD (MLE) expected cumulative transactions (aggregated)
-times = np.arange(1, max_week+1)
-# expected cumulative purchases per customer at each t
-per_cust_pnbd = np.array([
-    pnbd_mle.expected_number_of_purchases_up_to_time(t) for t in times
-])
-# multiply by number of customers to get group-level cumulative
-cum_pnbd_ml = per_cust_pnbd * len(cbs)
-
-# HB model cumulative
-inc_hb = (mean_lambda_m2[:, None]/mean_mu_m2[:, None]) * (
-    np.exp(-mean_mu_m2[:, None]*(times-1)) - np.exp(-mean_mu_m2[:, None]*times)
+ # --- Birth‑aligned Pareto/NBD baseline (MLE) -----------------
+# first purchase week for each customer
+birth_week = (
+    cdnowElog.groupby("cust")["week"].min()
+    .reindex(cbs["cust"])
+    .to_numpy()
 )
-cum_hb = inc_hb.sum(axis=0).cumsum()
+
+times = np.arange(1, max_week + 1)
+cum_pnbd_ml = np.zeros_like(times, dtype=float)
+
+for t_idx, t in enumerate(times):
+    # time since first purchase (≥0) for each customer
+    rel_t = np.clip(t - birth_week, 0, None)
+    exp_per_cust = pnbd_mle.expected_number_of_purchases_up_to_time(rel_t)
+    cum_pnbd_ml[t_idx] = exp_per_cust.sum()
+
+# --- Posterior‑predictive HB curve -----------------------------------------
+n_draws = len(xstar_m2_draws)
+inc_hb_weekly = np.zeros_like(times, dtype=float)
+
+for d in range(n_draws):
+    # map flat draw index `d` to (chain, draw) indices
+    draws_per_chain = len(draws_m2["level_1"][0])
+    chain = d // draws_per_chain
+    idx   = d % draws_per_chain
+    lam_d = draws_m2["level_1"][chain][idx, :, 0]
+    mu_d  = draws_m2["level_1"][chain][idx, :, 1]
+    tau_d = draws_m2["level_1"][chain][idx, :, 2]
+
+    rng_d = np.random.default_rng(d)  # reproducible per draw
+    for t_idx, t in enumerate(times):
+        dt = 1.0
+        active = (t > birth_week) & (t <= (birth_week + tau_d))   # after first purchase, before churn
+        inc = rng_d.poisson(lam=lam_d * dt * active)
+        inc_hb_weekly[t_idx] += inc.sum()
+
+# average across draws and take cumulative
+inc_hb_weekly /= n_draws
+cum_hb = np.cumsum(inc_hb_weekly)
 
 plt.figure(figsize=(8,5))
 plt.plot(times, cum_actual, '-', color='tab:blue', linewidth=2, label="Actual")
@@ -477,8 +510,7 @@ plt.legend()
 plt.savefig(os.path.join("Estimation","Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
-#
-# Figure 3: Conditional expectation of future transactions
+# %% Figure 3: Conditional expectation of future transactions
 # Group by number of calibration transactions (0–7+)
 # Updated to use Pareto/NBD baseline with Model M1 posterior means
 df = pd.DataFrame({
@@ -506,7 +538,7 @@ plt.legend()
 plt.savefig(os.path.join("Estimation","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
-# Figure 4: Scatter plot of posterior means of λ and μ
+# %% Figure 4: Scatter plot of posterior means of λ and μ
 plt.figure(figsize=(6,6))
 plt.scatter(mean_lambda_m2, mean_mu_m2, alpha=0.3)
 plt.xlabel("λ")
@@ -515,7 +547,7 @@ plt.title("Figure 4: Scatter Plot of Posterior Means of λ and μ for CDNOW Data
 plt.savefig(os.path.join("Estimation","Figure4_scatter_lambda_mu.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
-# Figure 5: Histogram of correlation between log(λ) and log(μ)
+# %% Figure 5: Histogram of correlation between log(λ) and log(μ)
 # Compute correlation draws from level_2
 corr_draws = []
 for chain in draws_m2["level_2"]:

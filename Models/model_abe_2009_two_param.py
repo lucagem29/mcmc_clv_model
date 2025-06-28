@@ -1,6 +1,9 @@
-"""pareto_abe.py
+"""
 Python re-implementation of the hierarchical-Bayes Pareto/NBD variant from
-Abe (2009):
+Abe (2009) with two parameters (λ, μ).
+
+This module provides a complete implementation of the Pareto/NBD model as
+described in Abe's 2009 paper, including:
 
 * Synthetic-data generator identical to `abe.GenerateData` from the original R
   code.
