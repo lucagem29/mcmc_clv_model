@@ -343,7 +343,6 @@ correlation_row = pd.DataFrame({
     ("HB M2 (with a covariate)", "97.5%"): [corr_m2[2]],
 }, index=["Correlation computed from Γ₀"])
 
-
 # --- compute chain‑averaged log‑likelihood ---------------------------------
 def chain_total_loglik(level1_chains, cbs):
     """Return average over draws of Σ_i log L_i."""
