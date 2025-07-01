@@ -375,9 +375,7 @@ def chain_total_loglik(level1_chains, cbs):
                 - gammaln(x + 1)            # remove constant term for comparability
             )
             totals.append(ll_vec.sum())
-    # Abe (2009) reports log‑likelihood for a 1/10 subsample (≈ 235 customers).
-    # Scale the total by 0.1 so our numbers are directly comparable.
-    return np.mean(totals) * 0.1
+    return np.mean(totals)
 
 ll_m1 = chain_total_loglik(draws_m1["level_1"], cbs).round(0)
 ll_m2 = chain_total_loglik(draws_m2["level_1"], cbs).round(0)
