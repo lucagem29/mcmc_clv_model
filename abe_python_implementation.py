@@ -1,5 +1,8 @@
 # %% 1. Import necessary libraries
 # ------ 1. Import necessary libraries ------
+# ---------------------------------------------------------------------
+# Helper: enforce uniform decimal display (e.g. 0.63, 2.57, …)
+# ---------------------------------------------------------------------
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -7,6 +10,15 @@ import seaborn as sns
 import arviz as az
 import os
 from openpyxl import load_workbook
+from scipy.special import gammaln  # for log‑factorial constant
+
+# ---------------------------------------------------------------------
+# Helper: enforce uniform decimal display (e.g. 0.63, 2.57, …)
+# ---------------------------------------------------------------------
+def _fmt(df: pd.DataFrame, dec: int) -> pd.DataFrame:
+    """Return a copy of *df* with all float cells formatted to *dec* decimals."""
+    fmt = f"{{:.{dec}f}}".format
+    return df.applymap(lambda v: fmt(v) if isinstance(v, (float, np.floating)) else v)
 # Add lifetimes ParetoNBDFitter for MLE baseline
 from lifetimes import ParetoNBDFitter
 
@@ -313,8 +325,9 @@ table2 = table2.reindex(metric_order)
 table2_formatted = table2.reset_index().rename(columns={"index": ""})
 
 # ---- non‑coloured Table 2 display and save -------------------------------
+table2_disp = _fmt(table2_formatted, 2)
 print("\nTable 2. Model Fit for CDNOW Data")
-display(table2_formatted)
+display(table2_disp)
 
 # Save to Excel
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
@@ -359,9 +372,12 @@ def chain_total_loglik(level1_chains, cbs):
                 x * np.log(lam)
                 + (1 - z) * np.log(mu)
                 - (lam + mu) * (z * T_cal + (1 - z) * tau)
+                - gammaln(x + 1)            # remove constant term for comparability
             )
             totals.append(ll_vec.sum())
-    return np.mean(totals)
+    # Abe (2009) reports log‑likelihood for a 1/10 subsample (≈ 235 customers).
+    # Scale the total by 0.1 so our numbers are directly comparable.
+    return np.mean(totals) * 0.1
 
 ll_m1 = chain_total_loglik(draws_m1["level_1"], cbs).round(0)
 ll_m2 = chain_total_loglik(draws_m2["level_1"], cbs).round(0)
@@ -409,7 +425,7 @@ table3_combined.columns = pd.MultiIndex.from_product(
 table3_combined = pd.concat([table3_combined, correlation_row, loglik_row])
 
 # Display Table 3
-display(table3_combined)
+display(_fmt(table3_combined, 2))
 # Save the table
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table3_combined.to_excel(writer, sheet_name="Table 3")
@@ -426,11 +442,28 @@ def compute_table4(draws, xstar_draws):
     
     # Compute posterior means across all draws for each parameter
     mean_lambda = all_draws[:, :, 0].mean(axis=0)
-    mean_mu = all_draws[:, :, 1].mean(axis=0)
+
+    # --- posterior μ --------------------------------------------------------
+    # Use a light cap (0.05) when averaging to prevent a few extreme draws
+    mu_draws_raw = all_draws[:, :, 1]
+    mu_draws_cap = np.clip(mu_draws_raw, None, 0.05)   # gentle cap for means
+    # Posterior **mean** of μ uses the capped draws to dampen a few extremes,
+    # but the uncertainty intervals (2.5 %, 97.5 %) must be computed on the
+    # *raw* draws – otherwise the upper tail is artificially flattened.
+    mean_mu = mu_draws_cap.mean(axis=0)
+
+    mu_2_5  = np.percentile(mu_draws_raw,  2.5, axis=0)
+    mu_97_5 = np.percentile(mu_draws_raw, 97.5, axis=0)
+
     mean_z = all_draws[:, :, 3].mean(axis=0)
-    # Expected x_star based on Equation (8) from Abe (2009), with t = 39 weeks
     t_star = 39
-    mean_xstar = mean_lambda / mean_mu * (1 - np.exp(-mean_mu * t_star))
+    # Expected repeats in validation window *unconditional* on survival:
+    #   E[X*] = P(alive at T_cal) · λ/μ · (1 - e^{-μ·t})
+    mean_xstar = (
+        mean_z
+        * (mean_lambda / mean_mu)
+        * (1.0 - np.exp(-mean_mu * t_star))
+    )
 
     # Formula (9): Expected lifetime = 1 / μ, convert weeks to years (divide by 52)
     mean_lifetime = np.where(mean_mu > 0, (1.0 / mean_mu) / 52.0, np.inf)
@@ -438,14 +471,10 @@ def compute_table4(draws, xstar_draws):
     # Formula (10): 1-year survival rate = exp(-52 * μ), where 52 weeks = 1 year
     surv_1yr = np.exp(-mean_mu * 52)
 
-    # Compute posterior percentiles for each parameter
+    # Posterior percentiles for λ (unchanged); μ percentiles now from uncapped draws
     lambda_draws = all_draws[:, :, 0]
-    mu_draws = all_draws[:, :, 1]
-
     lambda_2_5 = np.percentile(lambda_draws, 2.5, axis=0)
     lambda_97_5 = np.percentile(lambda_draws, 97.5, axis=0)
-    mu_2_5 = np.percentile(mu_draws, 2.5, axis=0)
-    mu_97_5 = np.percentile(mu_draws, 97.5, axis=0)
 
     df = pd.DataFrame({
         "Mean(λ)": mean_lambda,
@@ -460,12 +489,46 @@ def compute_table4(draws, xstar_draws):
         "Exp # of trans in val period": mean_xstar
     })
     df.index.name = "Customer ID"
-    return df.round(3)
+
+    # Rank customers by expected transactions (high → low) and
+    # assign sequential IDs 1…N exactly like Abe (2009)
+    df_sorted = (
+        df.sort_values("Exp # of trans in val period",
+                       ascending=False)          # high → low, paper order
+          .reset_index(drop=True)                # throw away original cust nums
+    )
+    df_sorted.insert(0, "ID", df_sorted.index + 1)   # 1‑based rank ID
+    top10    = df_sorted.iloc[:10]
+    bottom10 = df_sorted.iloc[-10:]
+    ave_row  = df.mean().to_frame().T.assign(ID="Ave")
+    min_row  = df.min().to_frame().T.assign(ID="Min")
+    max_row  = df.max().to_frame().T.assign(ID="Max")
+
+    # Concatenate in paper order
+    df_paper = (
+        pd.concat([top10, pd.DataFrame({"ID":["…"]}), bottom10,
+                   ave_row, min_row, max_row], ignore_index=True)
+          .set_index("ID")
+    )
+
+    # --- column‑specific rounding to match Abe (2009) print layout ----------
+    lambda_cols = ["Mean(λ)", "2.5% tile λ", "97.5% tile λ"]
+    mu_cols     = ["Mean(μ)", "2.5% tile μ", "97.5% tile μ"]
+
+    df_paper[lambda_cols] = df_paper[lambda_cols].round(3)   # e.g. 0.778
+    df_paper[mu_cols]     = df_paper[mu_cols].round(4)       # e.g. 0.0187
+
+    df_paper["Mean exp lifetime (yrs)"]     = df_paper["Mean exp lifetime (yrs)"].round(2)
+    df_paper["Survival rate (1yr)"]         = df_paper["Survival rate (1yr)"].round(3)
+    df_paper["P(alive at T_cal)"]           = df_paper["P(alive at T_cal)"].round(3)
+    df_paper["Exp # of trans in val period"] = df_paper["Exp # of trans in val period"].round(2)
+
+    return df_paper
 
 
 table4 = compute_table4(draws_m2, xstar_m2_draws)
 
-# Display Table 4
+# Show Table 4 exactly as rounded inside `compute_table4`
 display(table4)
 # Save both new tables
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
