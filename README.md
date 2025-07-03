@@ -1,84 +1,103 @@
+# Abe (2009) Pareto/NBD Model Implementation (Modular Python Version)
 
-
-# Abe (2009) Pareto/NBD Model Implementation
-
-This repository contains a Python implementation of the hierarchical Bayesian Pareto/NBD model from Abe (2009) applied to the CDNOW dataset. It covers model estimation, customer-level forecasts, and evaluation of model fit and predictive accuracy, reproducing Tables 1–4 from the original paper.
+This repository contains a modular Python implementation of the hierarchical Bayesian Pareto/NBD model from Abe (2009), applied to the CDNOW dataset. It supports model estimation, customer-level forecasts, and evaluation of model fit and predictive accuracy, reproducing Tables 1–4 and key figures from the original paper.
+Furthermore, it contains the three parameter extention, suggested by Abe 2015.
 
 ## Repository Structure
 
 ```
-Abe_2009_model_implementation/
-├── Data/
-│   └── cdnowElog.csv         # Raw CDNOW transaction log
-├── Models/
-│   ├── pareto_abe_manual.py  # MCMC routines for hierarchical Bayesian estimation
-│   └── elog2cbs.py           # Utility to convert event log to CBS format
-├── Estimation/
-│   └── estimation_results.xlsx  # Generated tables (Tables 1–4)
-├── abe_python_validation.py   # Main script to estimate models, compute Tables 1–4, and evaluate fit
-├── abe_python_validation.ipynb # Jupyter notebook with interactive cells
-├── README.md                  # This file
-└── .gitignore                 # Ignore Python cache, output files, etc.
+Abe_MCMC/
+├── data/
+│   ├── raw/                  # Raw input data (e.g., original CDNOW log)
+│   └── processed/            # Processed data (e.g., CBS format)
+├── excel/                    # Generated Excel summaries and tables
+├── outputs/
+│   ├── figures/              # Generated figures and plots
+│   ├── pickles/              # Saved MCMC draws and model outputs (pickle files)
+│   └── logs/                 # (Optional) Log files and run metadata
+├── src/
+│   ├── data_processing/
+│   │   └── cdnow_plus.py     # Data processing scripts
+│   ├── models/
+│   │   ├── bivariate/
+│   │   │   ├── mcmc.py       # Bivariate MCMC routines
+│   │   │   ├── analysis.py   # Bivariate model analysis and plotting
+│   │   │   └── run_mcmc.py   # (Optional) Script to run MCMC and save results
+│   │   ├── trivariate/
+│   │   │   ├── mcmc.py       # Trivariate MCMC routines
+│   │   │   ├── analysis.py   # Trivariate model analysis and plotting
+│   │   │   └── run_mcmc.py   # (Optional) Script to run MCMC and save results
+│   │   └── utils/
+│   │       └── elog2cbs2param.py # Utility: event log to CBS conversion
+│   └── estimation/           # (Optional) Shared estimation/plotting utilities
+├── tests/                    # (Recommended) Unit and integration tests
+├── notebooks/                # (Optional) Jupyter notebooks for exploration
+├── README.md                 # This file
+└── requirements.txt          # Python dependencies
 ```
 
 ## Prerequisites
 
-- Python 3.8 or higher  
-- Required packages:  
+- Python 3.8 or higher
+- Required packages:
   ```bash
-  pip install numpy pandas scipy matplotlib seaborn jupyter openpyxl
+  pip install numpy pandas scipy matplotlib seaborn jupyter openpyxl lifetimes arviz
   ```
 
 ## Usage
 
-1. **Convert CDNOW log to CBS format**  
-   ```bash
-   python Models/elog2cbs.py Data/cdnowElog.csv --output Data/cdnow_cbs.csv
-   ```
+### 1. Data Preparation
 
-2. **Run the validation script**  
-   ```bash
-   python abe_python_validation.py
-   ```
-   This will:
-   - Estimate two hierarchical Bayesian models (M1 without covariates, M2 with a sales covariate)
-   - Generate Tables 1–4 (saved to `Estimation/estimation_results.xlsx`)
-   - Produce evaluation metrics (disaggregate correlation, MSE; aggregate time-series MAPE)
+- Place the raw CDNOW event log (e.g., `cdnowElog.csv`) in `data/raw/`.
+- Use the data processing script to convert the event log to CBS format:
+  ```bash
+  python src/data_processing/cdnow_plus.py
+  ```
+  This will output a processed file (e.g., `cdnow_cbs_customers.csv`) in `data/processed/`.
 
-3. **Interactive exploration**  
-   Launch the notebook:
-   ```bash
-   jupyter notebook abe_python_validation.ipynb
-   ```
+### 2. Model Estimation and Analysis
 
+#### Bivariate Model
+- Run MCMC and analysis (from project root):
+  ```bash
+  python -m src.models.bivariate.analysis
+  ```
+  This will:
+  - Estimate bivariate models (with/without covariates)
+  - Save MCMC draws to `outputs/pickles/`
+  - Save tables to `excel/`
+  - Save figures to `outputs/figures/`
+
+#### Trivariate Model
+- Run MCMC and analysis (from project root):
+  ```bash
+  python -m src.models.trivariate.analysis
+  ```
+  (Outputs are saved in the same way as above, but for trivariate models.)
+
+### 3. Interactive Exploration
+- Launch a Jupyter notebook for custom analysis:
+  ```bash
+  jupyter notebook
+  ```
+  and open any notebook in the `notebooks/` directory (if present).
 
 ## Results
 
-- **Table 1**: Descriptive statistics of CDNOW customers  
-- **Table 2**: Model fit metrics (correlation, MSE, MAPE) for calibration and validation  
-- **Table 3**: Parameter estimates for M1 and M2 with credible intervals  
-- **Table 4**: Customer-level posterior summaries (expected lifetime, survival probability, forecasted transactions)
+- **Excel summaries**: All tables (Tables 1–4) are saved in `excel/`.
+- **Pickled MCMC draws**: Saved in `outputs/pickles/` for reproducibility and further analysis.
+- **Figures**: All plots and figures are saved in `outputs/figures/`.
 
 ## Figures
 
-### Figure 2: Weekly Time-Series Tracking for CDNOW Data
-![Figure 2](Estimation/Figure2_weekly_tracking.png)
+- **Figure 2**: Weekly Time-Series Tracking for CDNOW Data
+- **Figure 3**: Conditional Expectation of Future Transactions
+- **Figure 4**: Scatter Plot of Posterior Means of λ and μ
+- **Figure 5**: Distribution of log(λ)–log(μ) Correlations
+- **Scatter M1 vs. M2**: Actual vs. Predicted x_star (M1 vs. M2)
+- **Alive vs. Churned**: Predicted Alive vs. Churned Customers
 
-### Figure 3: Conditional Expectation of Future Transactions
-![Figure 3](Estimation/Figure3_conditional_expectation.png)
-
-### Figure 4: Scatter Plot of Posterior Means of λ and μ
-![Figure 4](Estimation/Figure4_scatter_lambda_mu.png)
-
-### Figure 5: Distribution of log(λ)–log(μ) Correlations
-![Figure 5](Estimation/Figure5_corr_histogram.png)
-
-### Actual vs. Predicted x_star (M1 vs. M2)
-![Scatter M1 vs M2](Estimation/Scatter_M1_M2.png)
-
-### Predicted Alive vs. Churned Customers
-![Alive vs. Churned](Estimation/Alive_vs_Churned.png)
-
+(Figures are saved in `outputs/figures/`)
 
 ## Contact
 

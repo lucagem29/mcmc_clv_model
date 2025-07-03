@@ -1,14 +1,29 @@
 # %% 1. Import necessary libraries
 # ------ 1. Import necessary libraries ------
-# ---------------------------------------------------------------------
-# Helper: enforce uniform decimal display (e.g. 0.63, 2.57, …)
-# ---------------------------------------------------------------------
+
+import sys
+import os
+
+# Find project root (folder containing "src") )
+cwd = os.getcwd()
+while not os.path.isdir(os.path.join(cwd, 'src')):
+    parent = os.path.dirname(cwd)
+    if parent == cwd:
+        break  # Reached the root of the filesystem
+    cwd = parent
+project_root = cwd
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Import rest of libraries
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import arviz as az
-import os
+import pandas as pd
+import pickle
+
 from openpyxl import load_workbook
 from scipy.special import gammaln  # for log‑factorial constant
 
@@ -27,22 +42,18 @@ from IPython.display import display
 
 # Import functions 
 # Import custom modules for data processing
-from Models.elog2cbs2param import elog2cbs
+from src.models.utils.elog2cbs2param import elog2cbs
 
 # Import custom modules for model estimation and prediction
-from Models.model_abe_2009_two_param import (
+from src.models.bivariate.mcmc import (
     mcmc_draw_parameters,
     draw_future_transactions
 )
 
-# Ensure Estimation directory exists
-os.makedirs("Estimation", exist_ok=True)
-excel_path = "Estimation/estimation_summaries.xlsx"
-
 # %% 2. Load dataset and convert to CBS format
 # ------ 2. Load dataset and convert to CBS format ------
 # We use dataset available in the BTYD package in R
-data_path = os.path.join("Data", "cdnowElog.csv")
+data_path = os.path.join(project_root, "data", "processed", "cdnowElog.csv")
 cdnowElog = pd.read_csv(data_path)
 
 # Convert date column to datetime
@@ -95,12 +106,18 @@ print("Table 1. Descriptive Statistics for CDNOW dataset")
 print(table1_stats.round(2))
 display(table1_stats)
 
-# Save both summaries to a single Excel file with two sheets
+
+# Set the path for the Excel file in the project root's 'excel' folder
+excel_path = os.path.join(project_root, "outputs", "excel", "bivariate_estimation_summaries.xlsx")
+os.makedirs(os.path.dirname(excel_path), exist_ok=True)
+
+# Save the DataFrame to the Excel file
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="w") as writer:
     table1_stats.to_excel(writer, sheet_name="Table 1")
 
-# %% 4. Estimate Model M1 (no covariates)
-# ------ 3. Start with model estimation M1 using no covariates ------
+# %% 4. Run MCMC for M1 and M2
+
+# ------ Start with model estimation M1 using no covariates ------
 
 # Estimate Model M1 (no covariates)
 draws_m1 = mcmc_draw_parameters(
@@ -114,9 +131,8 @@ draws_m1 = mcmc_draw_parameters(
     trace=1000
 )
 
-# ------ 4. Estimate Model M2 (with covariates) ------
+# ------ Estimate Model M2 (with covariates) ------
 
-#
 # Append dollar amount of first purchase to use as covariate (like in R)
 first = (
     cdnowElog.groupby("cust")["sales"].first()
@@ -142,6 +158,18 @@ draws_m2 = mcmc_draw_parameters(
     seed=42,
     trace=500
 )
+
+# Ensure the pickles directory exists at the project root
+pickles_dir = os.path.join(project_root, "outputs", "pickles")
+os.makedirs(pickles_dir, exist_ok=True)
+
+# Save Model M1 estimates
+with open(os.path.join(pickles_dir, "bivariate_M1.pkl"), "wb") as f:
+    pickle.dump(draws_m1, f)
+
+# Save Model M2 estimates
+with open(os.path.join(pickles_dir, "bivariate_M2.pkl"), "wb") as f:
+    pickle.dump(draws_m2, f)
 
 # %% 5. Compute metrics and predictions
 # ------ 5. Computing the metrics for comparison ------
@@ -231,6 +259,47 @@ print("Posterior Summary - Model M2 (with covariates):")
 print(summary_m2)
 
 # %% 6. Construct Table 2: Model Fit Evaluation
+
+# ------ Some prerequisites ------
+
+# Prepare weekly index and counts
+first_date = cdnowElog["date"].min()
+cdnowElog["week"] = ((cdnowElog["date"] - first_date) // pd.Timedelta("7D")).astype(int) + 1
+
+
+# Fit classical Pareto/NBD by maximum likelihood
+pnbd_mle = ParetoNBDFitter(penalizer_coef=0.0)
+pnbd_mle.fit(
+    frequency=cbs["x"],
+    recency=cbs["t_x"],
+    T=cbs["T_cal"]
+)
+# Classical Pareto/NBD (MLE) expected future repeats for the next 39 weeks
+exp_xstar_m1 = pnbd_mle.conditional_expected_number_of_purchases_up_to_time(
+    t_star,
+    cbs["x"],
+    cbs["t_x"],
+    cbs["T_cal"]
+)
+
+# Set the time range for the analysis
+max_week = cdnowElog["week"].max()
+
+times = np.arange(1, max_week + 1)
+
+# Sort the data by customer and week
+cdnowElog_sorted = cdnowElog.sort_values(by=["cust","week"])
+cdnowElog_sorted["txn_order"] = cdnowElog_sorted.groupby("cust").cumcount()
+
+repeat_txns = cdnowElog_sorted[cdnowElog_sorted["txn_order"] >= 1]
+
+
+weekly_actual = (
+    repeat_txns.groupby("week")["cust"].count()
+    .reindex(range(1, max_week+1), fill_value = 0))
+
+cum_pnbd_ml = np.zeros_like(times, dtype=float)
+
 # ------------------------------------------------------------------
 # Table 2 – Model‑fit metrics
 # ------------------------------------------------------------------
@@ -285,6 +354,8 @@ mapecum_val_pnbd = mape_aggregate(actual_weekly[weeks_val_mask], inc_pnbd_weekly
 mapecum_cal_pnbd = mape_aggregate(actual_weekly[weeks_cal_mask], inc_pnbd_weekly[weeks_cal_mask])
 mapecum_pool_pnbd = mape_aggregate(actual_weekly, inc_pnbd_weekly)
 
+
+inc_hb_weekly = np.zeros_like(times, dtype=float)
 mapecum_val_m1 = mape_aggregate(actual_weekly[weeks_val_mask], inc_hb_weekly[weeks_val_mask])
 mapecum_cal_m1 = mape_aggregate(actual_weekly[weeks_cal_mask], inc_hb_weekly[weeks_cal_mask])
 mapecum_pool_m1 = mape_aggregate(actual_weekly, inc_hb_weekly)
@@ -425,6 +496,7 @@ table3_combined = pd.concat([table3_combined, correlation_row, loglik_row])
 # Display Table 3
 display(_fmt(table3_combined, 2))
 # Save the table
+
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table3_combined.to_excel(writer, sheet_name="Table 3")
 
@@ -533,28 +605,9 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
     table4.to_excel(writer, sheet_name="Table 4")
 
 
-# %% Figures 2–5: Reproduce Abe (2009) plots
-# Prepare weekly index and counts
-first_date = cdnowElog["date"].min()
-cdnowElog["week"] = ((cdnowElog["date"] - first_date) // pd.Timedelta("7D")).astype(int) + 1
-max_week = cdnowElog["week"].max()
-
-# Fit classical Pareto/NBD by maximum likelihood
-pnbd_mle = ParetoNBDFitter(penalizer_coef=0.0)
-pnbd_mle.fit(
-    frequency=cbs["x"],
-    recency=cbs["t_x"],
-    T=cbs["T_cal"]
-)
+# %% 9. Figures 2–5: Reproduce Abe (2009) plots
 
 # Figure 2: Weekly cumulative repeat transactions
-cdnowElog_sorted = cdnowElog.sort_values(by=["cust","week"])
-cdnowElog_sorted["txn_order"] = cdnowElog_sorted.groupby("cust").cumcount()
-repeat_txns = cdnowElog_sorted[cdnowElog_sorted["txn_order"] >= 1]
-weekly_actual = (
-    repeat_txns.groupby("week")["cust"].count()
-    .reindex(range(1, max_week+1), fill_value = 0))
-
 # Cumulative actual transactions
 cum_actual = weekly_actual.cumsum()
 
@@ -566,9 +619,6 @@ birth_week = (
     .to_numpy()
 )
 
-times = np.arange(1, max_week + 1)
-cum_pnbd_ml = np.zeros_like(times, dtype=float)
-
 for t_idx, t in enumerate(times):
     # time since first purchase (≥0) for each customer
     rel_t = np.clip(t - birth_week, 0, None)
@@ -577,7 +627,6 @@ for t_idx, t in enumerate(times):
 
 # --- Posterior‑predictive HB curve -----------------------------------------
 n_draws = len(xstar_m2_draws)
-inc_hb_weekly = np.zeros_like(times, dtype=float)
 
 for d in range(n_draws):
     # map flat draw index `d` to (chain, draw) indices
@@ -608,7 +657,7 @@ plt.xlabel("Week")
 plt.ylabel("Cumulative repeat transactions")
 plt.title("Figure 2: Weekly Time-Series Tracking for CDNOW Data")
 plt.legend()
-plt.savefig(os.path.join("Estimation","Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures","Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # Figure 3: Conditional expectation of future transactions
@@ -626,15 +675,6 @@ mean_z_m1_cust      = all_draws_m1[:, :, 3].mean(axis=0)
 mean_lambda_m2_cust = all_draws_m2[:, :, 0].mean(axis=0)
 mean_mu_m2_cust     = all_draws_m2[:, :, 1].mean(axis=0)
 mean_z_m2_cust      = all_draws_m2[:, :, 3].mean(axis=0)
-
-#
-# Classical Pareto/NBD (MLE) expected future repeats for the next 39 weeks
-exp_xstar_m1 = pnbd_mle.conditional_expected_number_of_purchases_up_to_time(
-    t_star,
-    cbs["x"],
-    cbs["t_x"],
-    cbs["T_cal"]
-)
 
 # HB expectation (Model M2) – include posterior P(alive)
 exp_xstar_m2 = mean_z_m2_cust * (mean_lambda_m2_cust / mean_mu_m2_cust) * (1 - np.exp(-mean_mu_m2_cust * t_star))
@@ -661,7 +701,7 @@ plt.xlabel("Number of transactions in weeks 1–39")
 plt.ylabel("Average transactions in weeks 40–78")
 plt.title("Figure 3: Conditional Expectation of Future Transactions for CDNOW Data")
 plt.legend()
-plt.savefig(os.path.join("Estimation","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # Figure 4: Scatter plot of posterior means of λ and μ  (HB‑M1, paper style)
@@ -675,7 +715,7 @@ plt.ylim(0, 0.14)
 plt.xlabel(r"$\lambda$")
 plt.ylabel(r"$\mu$")
 plt.title("Figure 4: Scatter Plot of Posterior Means of λ and μ for CDNOW Data")
-plt.savefig(os.path.join("Estimation", "Figure4_scatter_lambda_mu.png"),
+plt.savefig(os.path.join(project_root, "outputs", "figures","Figure4_scatter_lambda_mu.png"),
             dpi=300, bbox_inches="tight")
 plt.show()
 
@@ -699,17 +739,9 @@ plt.xlim(-0.3, 0.4)
 plt.xlabel("Correlation")
 plt.ylabel("Frequency")
 plt.title("Figure 5: Distribution of Correlation Between log(λ) and log(μ) for CDNOW Data")
-plt.savefig(os.path.join("Estimation", "Figure5_corr_histogram.png"),
+plt.savefig(os.path.join(project_root, "outputs", "figures","Figure5_corr_histogram.png"),
             dpi=300, bbox_inches="tight")
 plt.show()
-
-
-
-
-
-
-
-
 
 
 # %% ------------ Additional visualizations and diagnostics ------------
@@ -738,7 +770,7 @@ for ax in axes:
     ax.grid(False)
 
 plt.tight_layout()
-plt.savefig(os.path.join("Estimation","Scatter_M1_M2.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures","Scatter_M1_M2.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # 7. Visualize the predicted alive vs. churned customers
@@ -787,7 +819,7 @@ ax.tick_params(axis='x', colors='#444444')
 
 # Final layout adjustment
 plt.tight_layout()
-plt.savefig(os.path.join("Estimation","Alive_vs_Churned.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures","Alive_vs_Churned.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # 8. Visualize the posterior distributions and traceplots for both models
