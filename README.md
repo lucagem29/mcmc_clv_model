@@ -8,13 +8,12 @@ Furthermore, it contains the three parameter extention, suggested by Abe 2015.
 ```
 Abe_MCMC/
 ├── data/
-│   ├── raw/                  # Raw input data (e.g., original CDNOW log)
-│   └── processed/            # Processed data (e.g., CBS format)
-├── excel/                    # Generated Excel summaries and tables
+│   ├── raw/                  # Raw input data
+│   └── processed/            # Processed data
 ├── outputs/
+│   ├── excel/                # Generated Excel summaries and tables
 │   ├── figures/              # Generated figures and plots
-│   ├── pickles/              # Saved MCMC draws and model outputs (pickle files)
-│   └── logs/                 # (Optional) Log files and run metadata
+│   └── pickles/              # Saved MCMC draws and model outputs
 ├── src/
 │   ├── data_processing/
 │   │   └── cdnow_plus.py     # Data processing scripts
@@ -22,16 +21,14 @@ Abe_MCMC/
 │   │   ├── bivariate/
 │   │   │   ├── mcmc.py       # Bivariate MCMC routines
 │   │   │   ├── analysis.py   # Bivariate model analysis and plotting
-│   │   │   └── run_mcmc.py   # (Optional) Script to run MCMC and save results
+│   │   │   └── run_mcmc.py   # (To DO) Script to run MCMC and save results
 │   │   ├── trivariate/
 │   │   │   ├── mcmc.py       # Trivariate MCMC routines
 │   │   │   ├── analysis.py   # Trivariate model analysis and plotting
-│   │   │   └── run_mcmc.py   # (Optional) Script to run MCMC and save results
+│   │   │   └── run_mcmc.py   # (To Do) Script to run MCMC and save results
 │   │   └── utils/
 │   │       └── elog2cbs2param.py # Utility: event log to CBS conversion
 │   └── estimation/           # (Optional) Shared estimation/plotting utilities
-├── tests/                    # (Recommended) Unit and integration tests
-├── notebooks/                # (Optional) Jupyter notebooks for exploration
 ├── README.md                 # This file
 └── requirements.txt          # Python dependencies
 ```
