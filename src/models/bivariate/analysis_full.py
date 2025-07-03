@@ -1,10 +1,18 @@
-# %% 1. Import necessary libraries
-# ------ 1. Import necessary libraries ------
-
+# ------------------------------------------------------------------
+# this script extends the analysis from Abe (2009) with the whole CDNOW dataset
+# ------------------------------------------------------------------
+#%% 
+# ------------------------------------------------------------------
+# this script reproduces the analysis from Abe (2009)
+# ------------------------------------------------------------------
+# %% 1. Import necessary libraries & set project root & custom modules & helper function
+# -- 1. Import necessary libraries & set project root & custom modules & helper function --
+# ------------------------------------------------------------------
 import sys
 import os
-
+# ------------------------------------------------------------------
 # Find project root (folder containing "src") )
+# ------------------------------------------------------------------
 cwd = os.getcwd()
 while not os.path.isdir(os.path.join(cwd, 'src')):
     parent = os.path.dirname(cwd)
@@ -14,18 +22,24 @@ while not os.path.isdir(os.path.join(cwd, 'src')):
 project_root = cwd
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+# ------------------------------------------------------------------
 
 # Import rest of libraries
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import arviz as az
 import pandas as pd
 import pickle
 
-from openpyxl import load_workbook
+# Add lifetimes ParetoNBDFitter for MLE baseline
+from lifetimes import ParetoNBDFitter
+
 from scipy.special import gammaln  # for log‑factorial constant
+from IPython.display import display
+
+# Import custom module 
+from src.models.bivariate.mcmc import draw_future_transactions
 
 # ---------------------------------------------------------------------
 # Helper: enforce uniform decimal display (e.g. 0.63, 2.57, …)
@@ -34,39 +48,33 @@ def _fmt(df: pd.DataFrame, dec: int) -> pd.DataFrame:
     """Return a copy of *df* with all float cells formatted to *dec* decimals."""
     fmt = f"{{:.{dec}f}}".format
     return df.applymap(lambda v: fmt(v) if isinstance(v, (float, np.floating)) else v)
-# Add lifetimes ParetoNBDFitter for MLE baseline
-from lifetimes import ParetoNBDFitter
+# ------------------------------------------------------------------
+# %% 2. Load estimates and data
+# -- 2. Load estimates and data --
+# ------------------------------------------------------------------
+# --- Load Pre-computed Results ---
+pickles_dir = os.path.join(project_root, "outputs", "pickles")
 
-# For interactive table display
-from IPython.display import display
+# Load MCMC draws
+with open(os.path.join(pickles_dir, "full_bivariate_M1.pkl"), "rb") as f:
+    draws_m1 = pickle.load(f)
+with open(os.path.join(pickles_dir, "full_bivariate_M2.pkl"), "rb") as f:
+    draws_m2 = pickle.load(f)
 
-# Import functions 
-# Import custom modules for data processing
-from src.models.utils.elog2cbs2param import elog2cbs
+# Load the CBS DataFrame
+with open(os.path.join(pickles_dir, "cbs_full_bivariate_data.pkl"), "rb") as f:
+    cbs = pickle.load(f)
 
-# Import custom modules for model estimation and prediction
-from src.models.bivariate.mcmc import (
-    mcmc_draw_parameters,
-    draw_future_transactions
-)
+data_path = os.path.join(project_root, "data", "processed", "cdnow_purchases.csv")
 
-# %% 2. Load dataset and convert to CBS format
-# ------ 2. Load dataset and convert to CBS format ------
-# We use dataset available in the BTYD package in R
-data_path = os.path.join(project_root, "data", "processed", "cdnowElog.csv")
 cdnowElog = pd.read_csv(data_path)
-
 # Convert date column to datetime
 cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
-
-# Convert event log to customer-by-sufficient-statistic (CBS) format
-cbs = elog2cbs(cdnowElog, units="W", T_cal="1997-09-30", T_tot="1998-06-30")
-#cbs = create_customer_summary(cdnowElog, T_cal="1997-09-30", T_tot="1998-06-30")
-cbs = cbs.rename(columns={"t.x": "t_x", "T.cal": "T_cal", "x.star": "x_star"})
-cbs.head()
-
-# %% 3. Construct Table 1: Descriptive Statistics
-# ------ Construct Table 1 from Abe 2009 (Descriptive Statistics) ------
+# ------------------------------------------------------------------
+# %% 3. Descriptive Statistics
+# -- 3. Descriptive Statistics --
+# ------------------------------------------------------------------
+# ------ Construct Table 1 from Abe 2009  ------
 table1_stats = pd.DataFrame(
     {
         "Mean": [
@@ -102,77 +110,22 @@ table1_stats = pd.DataFrame(
     ]
 )
 
-print("Table 1. Descriptive Statistics for CDNOW dataset")
+print("Table 1. Descriptive Statistics for full CDNOW dataset")
 print(table1_stats.round(2))
 display(table1_stats)
 
 
 # Set the path for the Excel file in the project root's 'excel' folder
-excel_path = os.path.join(project_root, "outputs", "excel", "bivariate_estimation_summaries.xlsx")
+excel_path = os.path.join(project_root, "outputs", "excel", "full_bivariate_estimation_summaries.xlsx")
 os.makedirs(os.path.dirname(excel_path), exist_ok=True)
 
 # Save the DataFrame to the Excel file
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="w") as writer:
     table1_stats.to_excel(writer, sheet_name="Table 1")
-
-# %% 4. Run MCMC for M1 and M2
-
-# ------ Start with model estimation M1 using no covariates ------
-
-# Estimate Model M1 (no covariates)
-draws_m1 = mcmc_draw_parameters(
-    cal_cbs=cbs,
-    covariates=[],
-    mcmc=4000,
-    burnin=10000,
-    thin=50,
-    chains=2,
-    seed=42,
-    trace=1000
-)
-
-# ------ Estimate Model M2 (with covariates) ------
-
-# Append dollar amount of first purchase to use as covariate (like in R)
-first = (
-    cdnowElog.groupby("cust")["sales"].first()
-    .reset_index()
-    .rename(columns={"sales": "first_sales"})
-)
-first["first_sales"] = first["first_sales"] * 1e-3   # scale to $10^-3
-cbs = pd.merge(cbs, first[["cust", "first_sales"]], on="cust", how="left")
-
-# Normalize first_sales
-mean_val = cbs["first_sales"].mean()
-std_val = cbs["first_sales"].std()
-cbs["first_sales_scaled"] = (cbs["first_sales"] - mean_val) / std_val
-
-# Estimate Model M2 (with first_sales)
-draws_m2 = mcmc_draw_parameters(
-    cal_cbs=cbs,
-    covariates=["first_sales_scaled"],
-    mcmc=4000,
-    burnin=10000,
-    thin=50,
-    chains=2,
-    seed=42,
-    trace=500
-)
-
-# Ensure the pickles directory exists at the project root
-pickles_dir = os.path.join(project_root, "outputs", "pickles")
-os.makedirs(pickles_dir, exist_ok=True)
-
-# Save Model M1 estimates
-with open(os.path.join(pickles_dir, "bivariate_M1.pkl"), "wb") as f:
-    pickle.dump(draws_m1, f)
-
-# Save Model M2 estimates
-with open(os.path.join(pickles_dir, "bivariate_M2.pkl"), "wb") as f:
-    pickle.dump(draws_m2, f)
-
-# %% 5. Compute metrics and predictions
-# ------ 5. Computing the metrics for comparison ------
+# ------------------------------------------------------------------
+# %% 4. Compute metrics and predictions
+# -- 4. Compute metrics and predictions --
+# ------------------------------------------------------------------
 
 # Function to summarize level 2 draws
 def summarize_level2(draws_level2: np.ndarray, param_names: list[str], decimals: int = 2) -> pd.DataFrame:
@@ -215,7 +168,7 @@ summary_m1.index = [
     "sigma^2_λ = var[log λ]",
     "sigma^2_μ = var[log μ]",
     "sigma_λ_μ = cov[log λ, log μ]"
-]
+] # type: ignore
 summary_m2.index = [
     "Purchase rate log(λ) - Intercept",
     "Purchase rate log(λ) - Initial amount ($ 10^-3)",
@@ -224,7 +177,9 @@ summary_m2.index = [
     "sigma^2_λ = var[log λ]",
     "sigma^2_μ = var[log μ]",
     "sigma_λ_μ = cov[log λ, log μ]"
-]
+] # type: ignore
+
+# ------------------------------------------------------------------
 
 # Compute posterior means of λ and μ
 def post_mean_lambdas(draws):
@@ -257,15 +212,15 @@ print(summary_m1)
 
 print("Posterior Summary - Model M2 (with covariates):")
 print(summary_m2)
-
-# %% 6. Construct Table 2: Model Fit Evaluation
-
+# ------------------------------------------------------------------
+# %% 5. Construct Table 2: Model Fit Evaluation
+# -- 5. Construct Table 2: Model Fit Evaluation --
+# ------------------------------------------------------------------
 # ------ Some prerequisites ------
 
 # Prepare weekly index and counts
 first_date = cdnowElog["date"].min()
 cdnowElog["week"] = ((cdnowElog["date"] - first_date) // pd.Timedelta("7D")).astype(int) + 1
-
 
 # Fit classical Pareto/NBD by maximum likelihood
 pnbd_mle = ParetoNBDFitter(penalizer_coef=0.0)
@@ -293,7 +248,6 @@ cdnowElog_sorted["txn_order"] = cdnowElog_sorted.groupby("cust").cumcount()
 
 repeat_txns = cdnowElog_sorted[cdnowElog_sorted["txn_order"] >= 1]
 
-
 weekly_actual = (
     repeat_txns.groupby("week")["cust"].count()
     .reindex(range(1, max_week+1), fill_value = 0))
@@ -305,6 +259,7 @@ cum_pnbd_ml = np.zeros_like(times, dtype=float)
 # ------------------------------------------------------------------
 # --- individual‑level correlation & MSE ---------------------------
 # Validation period (x_star)
+
 corr_val_pnbd = np.corrcoef(cbs["x_star"], exp_xstar_m1)[0, 1]
 mse_val_pnbd  = np.mean((cbs["x_star"] - exp_xstar_m1) ** 2)
 
@@ -365,7 +320,10 @@ mapecum_val_m2 = mapecum_val_m1
 mapecum_cal_m2 = mapecum_cal_m1
 mapecum_pool_m2 = mapecum_pool_m1
 
+# ------------------------------------------------------------------
 # --- assemble DataFrame ------------------------------------------
+# ------------------------------------------------------------------
+
 table2 = pd.DataFrame({
     "Pareto/NBD": [corr_val_pnbd, corr_calib_pnbd,
                    mse_val_pnbd,  mse_calib_pnbd,
@@ -403,9 +361,10 @@ display(table2_disp)
 # Save to Excel
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table2_formatted.to_excel(writer, sheet_name="Table 2", index=False, float_format="%.2f")
-
-# %% 7. Construct Table 3: Estimation Results
-# ------ Construct Table 3 from Abe 2009 (Estimation Results) ------
+# ------------------------------------------------------------------
+# %% 6. Construct Table 3: Estimation Results
+# -- 6. Construct Table 3: Estimation Results --
+# ------------------------------------------------------------------
 # --- Compute correlation between log_lambda and log_mu from posterior (for both models) ---
 def extract_correlation(draws_level2):
     cov = draws_level2[:, -2]  # cov_log_lambda_mu
@@ -495,13 +454,14 @@ table3_combined = pd.concat([table3_combined, correlation_row, loglik_row])
 
 # Display Table 3
 display(_fmt(table3_combined, 2))
-# Save the table
 
+# Save the table
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table3_combined.to_excel(writer, sheet_name="Table 3")
-
-# %% 8. Construct Table 4: Customer-Level Statistics
-# ------ Construct Table 4: Customer-Level Statistics ------
+# ------------------------------------------------------------------
+# %% 7. Construct Table 4: Customer-Level Statistics
+# -- 7. Construct Table 4: Customer-Level Statistics --
+# -------------------------------------------------------------------
 # Generate posterior predictive draws for validation period
 xstar_m1_draws = draw_future_transactions(cbs, draws_m1, T_star=t_star, seed=42)
 xstar_m2_draws = draw_future_transactions(cbs, draws_m2, T_star=t_star, seed=42)
@@ -603,11 +563,12 @@ display(table4)
 # Save both new tables
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
     table4.to_excel(writer, sheet_name="Table 4")
-
-
-# %% 9. Figures 2–5: Reproduce Abe (2009) plots
-
+# -------------------------------------------------------------------
+# %% 8. Figures 2–5: Reproduce Abe (2009) plots
+# -- 8. Figures 2–5: Reproduce Abe (2009) plots --
+# -------------------------------------------------------------------
 # Figure 2: Weekly cumulative repeat transactions
+# -------------------------------------------------------------------
 # Cumulative actual transactions
 cum_actual = weekly_actual.cumsum()
 
@@ -657,10 +618,12 @@ plt.xlabel("Week")
 plt.ylabel("Cumulative repeat transactions")
 plt.title("Figure 2: Weekly Time-Series Tracking for CDNOW Data")
 plt.legend()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures","full_cdnow", "Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
+# -------------------------------------------------------------------
 # Figure 3: Conditional expectation of future transactions
+# -------------------------------------------------------------------
 # Group by number of calibration transactions (0–7+)
 # Use analytical expectations, with different formulas for Pareto/NBD (M1) and HB (M2)
 
@@ -701,10 +664,11 @@ plt.xlabel("Number of transactions in weeks 1–39")
 plt.ylabel("Average transactions in weeks 40–78")
 plt.title("Figure 3: Conditional Expectation of Future Transactions for CDNOW Data")
 plt.legend()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "full_cdnow", "Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
 plt.show()
-
+# -------------------------------------------------------------------
 # Figure 4: Scatter plot of posterior means of λ and μ  (HB‑M1, paper style)
+# -------------------------------------------------------------------
 mean_lambda_m1 = post_mean_lambdas(draws_m1)
 mean_mu_m1     = post_mean_mus(draws_m1)
 
@@ -715,11 +679,12 @@ plt.ylim(0, 0.14)
 plt.xlabel(r"$\lambda$")
 plt.ylabel(r"$\mu$")
 plt.title("Figure 4: Scatter Plot of Posterior Means of λ and μ for CDNOW Data")
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure4_scatter_lambda_mu.png"),
+plt.savefig(os.path.join(project_root, "outputs", "figures", "full_cdnow", "Figure4_scatter_lambda_mu.png"),
             dpi=300, bbox_inches="tight")
 plt.show()
-
+# -------------------------------------------------------------------
 # Figure 5: Histogram of correlation between log(λ) and log(μ)
+# -------------------------------------------------------------------
 
 # Flatten level‑2 draws across chains
 level2_all = np.vstack(draws_m2["level_2"])   # shape (total_draws, n_params)
@@ -739,14 +704,15 @@ plt.xlim(-0.3, 0.4)
 plt.xlabel("Correlation")
 plt.ylabel("Frequency")
 plt.title("Figure 5: Distribution of Correlation Between log(λ) and log(μ) for CDNOW Data")
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure5_corr_histogram.png"),
+plt.savefig(os.path.join(project_root, "outputs", "figures", "full_cdnow", "Figure5_corr_histogram.png"),
             dpi=300, bbox_inches="tight")
 plt.show()
-
-
-# %% ------------ Additional visualizations and diagnostics ------------
-
-# 6. Create scatterplots to visualize the predictions of both models
+# -------------------------------------------------------------------
+# %% 9. Additional visualizations and diagnostics 
+# -- 9. Additional visualizations and diagnostics --
+# -------------------------------------------------------------------
+# Plot 6. Create scatterplots to visualize the predictions of both models
+# -------------------------------------------------------------------
 sns.set(style="whitegrid")
 
 # Create a figure with two subplots
@@ -770,10 +736,12 @@ for ax in axes:
     ax.grid(False)
 
 plt.tight_layout()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Scatter_M1_M2.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "full_cdnow", "Scatter_M1_M2.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
+# -------------------------------------------------------------------
 # 7. Visualize the predicted alive vs. churned customers
+# -------------------------------------------------------------------
 # Add a new column for predicted alive status based on xstar_m2_pred
 cbs["is_alive_pred"] = np.where(cbs["xstar_m2_pred"] >= 1, 1, 0)
 
@@ -819,10 +787,11 @@ ax.tick_params(axis='x', colors='#444444')
 
 # Final layout adjustment
 plt.tight_layout()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Alive_vs_Churned.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "full_cdnow", "Alive_vs_Churned.png"), dpi=300, bbox_inches='tight')
 plt.show()
-
+# -------------------------------------------------------------------
 # 8. Visualize the posterior distributions and traceplots for both models
+# -------------------------------------------------------------------
 # Convert M1 to InferenceData
 idata_m1 = az.from_dict(
     posterior={"level_2": np.array(draws_m1["level_2"])},  # shape: (chains, draws, dims)
@@ -850,6 +819,9 @@ idata_m2 = az.from_dict(
     dims={"level_2": ["param"]}
 )
 
+# -------------------------------------------------------------------
+# -------------------------------------------------------------------
+# -------------------------------------------------------------------
 # Plot traceplots for both models
 az.plot_trace(idata_m1, var_names=["level_2"], figsize=(12, 6))
 plt.suptitle("Traceplot - M1", fontsize=14)
@@ -881,7 +853,9 @@ plt.suptitle("Autocorrelation - M2", fontsize=14)
 plt.tight_layout()
 plt.show()
 
+# -------------------------------------------------------------------
 # 10. Autocorrelation – M1 vs. M2
+# -------------------------------------------------------------------
 # Get number of parameters (last dimension)
 n_params_m1 = idata_m1.posterior["level_2"].shape[-1]
 n_params_m2 = idata_m2.posterior["level_2"].shape[-1]
@@ -911,4 +885,4 @@ fig = az.plot_posterior(
 plt.suptitle("Posterior Distributions - M2", fontsize=16, y=1.02)
 plt.subplots_adjust(hspace=0.5)
 plt.show()
-# %%
+# -------------------------------------------------------------------

@@ -1,10 +1,12 @@
-# %% 1. Import necessary libraries
-# ------ 1. Import necessary libraries ------
+# %% 1. Import necessary libraries & set project root & custom modules & helper function
+# -- 1. Import necessary libraries & set project root & custom modules & helper function --
+# ------------------------------------------------------------------
 
 import os
 import sys
-
+# ------------------------------------------------------------------
 # Find project root (folder containing "src") )
+# ------------------------------------------------------------------
 cwd = os.getcwd()
 while not os.path.isdir(os.path.join(cwd, 'src')):
     parent = os.path.dirname(cwd)
@@ -14,17 +16,13 @@ while not os.path.isdir(os.path.join(cwd, 'src')):
 project_root = cwd
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+# ------------------------------------------------------------------
 
 # Import rest of libraries
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-import arviz as az
 import pickle
-
-from openpyxl import load_workbook
-from scipy.special import gammaln  # for log‑factorial constant
 
 # ---------------------------------------------------------------------
 # Helper: enforce uniform decimal display (e.g. 0.63, 2.57, …)
@@ -33,39 +31,39 @@ def _fmt(df: pd.DataFrame, dec: int) -> pd.DataFrame:
     """Return a copy of *df* with all float cells formatted to *dec* decimals."""
     fmt = f"{{:.{dec}f}}".format
     return df.applymap(lambda v: fmt(v) if isinstance(v, (float, np.floating)) else v)
-# Add lifetimes ParetoNBDFitter for MLE baseline
-from lifetimes import ParetoNBDFitter
 
 # For interactive table display
 from IPython.display import display
 
-# Import functions 
-# Import custom modules for data processing
-from src.models.utils.elog2cbs2param import elog2cbs
-
-# Import custom modules for model estimation and prediction
-from src.models.trivariate.mcmc import (
-    mcmc_draw_parameters_rfm_m,
-    draw_future_transactions
-)
-
-# %% 0. Load CDNOW CBS with customer covariates ---------------------------
-from pathlib import Path
-
 # ------------------------------------------------------------------------
-# Define the relative or absolute path to the data directory.
-# Adjust if your notebook sits elsewhere.
-# ------------------------------------------------------------------------
+# %% 2. Load estimates and data
+# -- 2. Load estimates and data --
+# ------------------------------------------------------------------
+# --- Load Pre-computed Results ---
+pickles_dir = os.path.join(project_root, "outputs", "pickles")
 
-DATA_DIR = Path(project_root) / "data" / "processed"
-FILE_CBS = DATA_DIR / "cdnow_cbs_customers.csv"
+# Load MCMC draws
+with open(os.path.join(pickles_dir, "trivariate_M1.pkl"), "rb") as f:
+    draws_3pI = pickle.load(f)
+with open(os.path.join(pickles_dir, "trivariate_M2.pkl"), "rb") as f:
+    draws_3pII = pickle.load(f)
 
-# ------------------------------------------------------------------------
-# Read the CSV.  If the column "first" (first purchase date) exists,
-# read it as datetime; everything else stays numeric / categorical.
-# ------------------------------------------------------------------------
-parse_cols = ["first"] if "first" in pd.read_csv(FILE_CBS, nrows=0).columns else None
-cbs_df = pd.read_csv(FILE_CBS, parse_dates=parse_cols)
+# Load the CBS DataFrame
+with open(os.path.join(pickles_dir, "cbs_bivariate_data.pkl"), "rb") as f:
+    cbs = pickle.load(f)
+
+data_path = os.path.join(project_root, "data", "processed", "cdnowElog.csv")
+
+cdnowElog = pd.read_csv(data_path)
+# Convert date column to datetime
+cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
+# ------------------------------------------------------------------
+
+DATA_DIR = os.path.join(project_root, "data", "processed") 
+FILE_CBS_PATH = os.path.join(DATA_DIR, "cdnow_cbs_customers.csv")
+
+parse_cols = ["first"] if "first" in pd.read_csv(FILE_CBS_PATH, nrows=0).columns else None
+cbs_df = pd.read_csv(FILE_CBS_PATH, parse_dates=parse_cols)
 
 # assume `sales` is total spend in calibration 
 # and `x` is # of repeat transactions (i.e. excluding the first purchase)
@@ -79,99 +77,16 @@ cbs_df["log_s"] = (
     .fillna(0.0)
 )
 
-# Quick sanity checks
-print("Shape:", cbs_df.shape)       # rows, columns
-display(cbs_df.head())              # first five rows
-display(cbs_df.describe(include="all").T)  # summary stats
-
-
-#%% # 1) Run HB sampler (intercept-only = no covariates)
-# ------------------------------------------------------------------------
-# 3) Run the RFM–M sampler with NO covariates → this is “Model 1”
-
-# Save Model 1 estimates (intercept-only)
-draws_3pI = mcmc_draw_parameters_rfm_m(
-    cal_cbs    = cbs_df,
-    covariates = None,      # intercept‐only
-    mcmc       = 5000,
-    burnin     = 5000,
-    thin       = 50,
-    chains     = 2,
-    seed       = 123,
-    trace      = 100,
-    n_mh_steps = 20,
-)
-
-# Ensure the pickles directory exists at the project root
-pickles_dir = os.path.join(project_root, "outputs", "pickles")
-os.makedirs(pickles_dir, exist_ok=True)
-with open(os.path.join(pickles_dir, "trivariate_M1.pkl"), "wb") as f:
-    pickle.dump(draws_3pI, f)
-
-#%% CHECK IF NEEDED
-
-# gender_F  --------------------------------------------------------------
-if "gender_F" not in cbs_df.columns:
-    if "gender_binary" in cbs_df.columns:          # 1 = M, 0 = F
-        cbs_df["gender_F"] = 1 - cbs_df["gender_binary"]
-    else:
-        cbs_df["gender_F"] = (cbs_df["gender"] == "F").astype(int)
-
-# age_scaled -------------------------------------------------------------
-if "age_scaled" not in cbs_df.columns:
-    cbs_df["age_scaled"] = (cbs_df["age"] - cbs_df["age"].mean()) / cbs_df["age"].std()
-
-covariate_cols = ["gender_F", "age_scaled"]
-print("Data shape:", cbs_df.shape)
-print("Using covariates:", covariate_cols)
-
-#%% RUN WITH COVARIATES
-draws_3pII = mcmc_draw_parameters_rfm_m(
-    cal_cbs    = cbs_df,
-    covariates = covariate_cols,
-    mcmc       = 5000,
-    burnin     = 5000,
-    thin       = 50,
-    chains     = 2,
-    seed       = 42,
-    trace      = 500
-)
-# Ensure the pickles directory exists at the project root
-pickles_dir = os.path.join(project_root, "outputs", "pickles")
-os.makedirs(pickles_dir, exist_ok=True)
-with open(os.path.join(pickles_dir, "trivariate_M2.pkl"), "wb") as f:
-    pickle.dump(draws_3pI, f)
-
-#%% # %% Table 2 – HB RFM model-fit metrics (no covariates vs. gender + age) --
+#%% 3. Table 2 – HB RFM model-fit metrics (no covariates vs. gender + age) --
 # * cbs_df        : CBS table already in memory (2357 × …)
 # * cdnowElog.csv : full event-log (raw transactions)
 # * draws_3pI     : intercept-only RFM–M draws   (m0  – “no cov”)
 # * draws_3pII    : gender_F + age_scaled draws  (m1  – “with cov”)
+# ----------------------------------------------------------------------
 # -----------------------------------------------------------------------
-from pathlib import Path
-import numpy as np, pandas as pd, pickle
-
+# Build helper arrays (weeks, masks, birth_week) – run once ----------
 # -----------------------------------------------------------------------
-# 0) Load event-log  (CBS df is already loaded as `cbs_df`)
-# -----------------------------------------------------------------------
-DATA_DIR = Path(project_root) / "data" / "processed"
-
-# -----------------------------------------------------------------------
-# 1) Ensure MCMC draws are present – load from disk if missing ----------
-#    (assumes Estimation/draws_3pI.pkl  etc.)
-# -----------------------------------------------------------------------
-EST_DIR = Path(project_root) / "outputs" / "pickles"
-if "draws_3pI" not in globals():
-    with open(EST_DIR / "draws_3pI.pkl", "rb") as f:
-        draws_3pI = pickle.load(f)
-if "draws_3pII" not in globals():
-    with open(EST_DIR / "draws_3pII.pkl", "rb") as f:
-        draws_3pII = pickle.load(f)
-
-# -----------------------------------------------------------------------
-# 2) Build helper arrays (weeks, masks, birth_week) – run once ----------
-# -----------------------------------------------------------------------
-elog_real_path = DATA_DIR / "cdnowElog.csv"
+elog_real_path = os.path.join(DATA_DIR, "cdnowElog.csv")
 elog_real = pd.read_csv(elog_real_path, parse_dates=["date"])
 
 first_date = elog_real["date"].min()
@@ -302,9 +217,6 @@ display(table2_disp)
 #   • draws_3pI   – intercept-only RFM–M
 #   • draws_3pII  – gender_F + age_scaled RFM–M
 # ----------------------------------------------------
-import matplotlib.pyplot as plt
-import numpy as np
-
 def posterior_cumulative(draws: dict, label: str) -> np.ndarray:
     """
     Return posterior-mean cumulative repeat transactions per week.
@@ -354,7 +266,6 @@ plt.ylabel("Cumulative repeat transactions")
 plt.title("Figure 2 – Weekly Time-Series Tracking (HB RFM)")
 plt.legend()
 plt.tight_layout()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure2_weekly_tracking_tri.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "full_cdnow","Figure2_weekly_tracking_tri.png"), dpi=300, bbox_inches='tight')
 plt.show()
-
 # %%

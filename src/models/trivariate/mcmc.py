@@ -747,17 +747,3 @@ def draw_future_transactions(
 
     spend_future = np.vstack(spend_sims)  # (total_draws, N)
     return x_future, spend_future
-
-
-
-# -----------------------------------------------------------------------------
-# Quick smoke‑test – run tiny MCMC on generated data when executed as script
-# -----------------------------------------------------------------------------
-if __name__ == "__main__":
-    beta = np.array([[0.18, -2.5]])  # intercept only
-    gamma = np.array([[0.05, 0.1], [0.1, 0.2]])
-
-    cbs, _ = generate_pareto_abe(50, 32, 32, beta, gamma, seed=42)
-    draws = mcmc_draw_parameters_rfm_m(cbs, mcmc=100, burnin=50, thin=10, chains=1, trace=20, seed=123)
-    print("level_2 draws shape:", draws["level_2"][0].shape)
-

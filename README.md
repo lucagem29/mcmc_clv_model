@@ -12,7 +12,9 @@ Abe_MCMC/
 │   └── processed/            # Processed data
 ├── outputs/
 │   ├── excel/                # Generated Excel summaries and tables
-│   ├── figures/              # Generated figures and plots
+│   ├── figures/              # Generated figures and plots of abe data --> TO DO TO UPDATE IN SUBFOLDER
+│   │   ├── full_cdnow/       # containing plots of individual analyis on full dataset
+│   │   └── full_cdnow_both/  # containing plots of four model comparison
 │   └── pickles/              # Saved MCMC draws and model outputs
 ├── src/
 │   ├── data_processing/
@@ -21,14 +23,14 @@ Abe_MCMC/
 │   │   ├── bivariate/
 │   │   │   ├── mcmc.py       # Bivariate MCMC routines
 │   │   │   ├── analysis.py   # Bivariate model analysis and plotting
-│   │   │   └── run_mcmc.py   # (To DO) Script to run MCMC and save results
+│   │   │   └── run_mcmc.py   # Script to run MCMC and save results
 │   │   ├── trivariate/
 │   │   │   ├── mcmc.py       # Trivariate MCMC routines
 │   │   │   ├── analysis.py   # Trivariate model analysis and plotting
-│   │   │   └── run_mcmc.py   # (To Do) Script to run MCMC and save results
+│   │   │   └── run_mcmc.py   # Script to run MCMC and save results
 │   │   └── utils/
 │   │       └── elog2cbs2param.py # Utility: event log to CBS conversion
-│   └── estimation/           # (Optional) Shared estimation/plotting utilities
+│   └── full_analysis.py      # Compiling the graphs of the four models on full CDNOW dataset
 ├── README.md                 # This file
 └── requirements.txt          # Python dependencies
 ```
