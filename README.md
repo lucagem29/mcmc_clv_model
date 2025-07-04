@@ -18,7 +18,9 @@ Abe_MCMC/
 │   └── pickles/              # Saved MCMC draws and model outputs
 ├── src/
 │   ├── data_processing/
-│   │   └── cdnow_plus.py     # Data processing scripts
+│   │   ├── cdnow_abe_covariates.py  # Adding covariates to Abes dataset (1/10 of full)
+│   │   ├── cdnow_abe.py      # outline of how extraction of original Abe dataset
+│   │   └── cdnow_full.py     # Processing the full CDNOW dataset
 │   ├── models/
 │   │   ├── bivariate/
 │   │   │   ├── mcmc.py       # Bivariate MCMC routines
@@ -31,8 +33,10 @@ Abe_MCMC/
 │   │   └── utils/
 │   │       └── elog2cbs2param.py # Utility: event log to CBS conversion
 │   └── full_analysis.py      # Compiling the graphs of the four models on full CDNOW dataset
-├── README.md                 # This file
-└── requirements.txt          # Python dependencies
+├── compare_pickles.py        # sanity check to make sure pickles do differ
+├── detailed_analysis_pickles # second sanity check to really make sure
+├── README.md                 
+└── SETUP_REQUIREMENTS.md     # Setup requirements !!
 ```
 
 ## Prerequisites

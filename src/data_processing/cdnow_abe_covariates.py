@@ -1,5 +1,7 @@
 # ------------------------------------------------------------------
-# this script loads and processes the whole CDNOW dataset
+# this script loads and processes the whole CDNOW dataset 
+# but adapts is used for adding customer demographics on the Abe dataset (1/10th of CDNOW)
+# --> not didentical to cdnow_full.py 
 # ------------------------------------------------------------------
 #%%
 import requests, io
