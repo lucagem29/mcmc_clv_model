@@ -19,7 +19,6 @@ Abe_MCMC/
 ├── src/
 │   ├── data_processing/
 │   │   ├── cdnow_abe_covariates.py  # Adding covariates to Abes dataset (1/10 of full)
-│   │   ├── cdnow_abe.py      # outline of how extraction of original Abe dataset
 │   │   └── cdnow_full.py     # Processing the full CDNOW dataset
 │   ├── models/
 │   │   ├── bivariate/
@@ -54,7 +53,7 @@ Abe_MCMC/
 - Place the raw CDNOW event log (e.g., `cdnowElog.csv`) in `data/raw/`.
 - Use the data processing script to convert the event log to CBS format:
   ```bash
-  python src/data_processing/cdnow_plus.py
+  python src/data_processing/cdnow_abe_covariates.py
   ```
   This will output a processed file (e.g., `cdnow_cbs_customers.csv`) in `data/processed/`.
 
