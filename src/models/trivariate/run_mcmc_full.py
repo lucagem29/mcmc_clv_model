@@ -22,6 +22,7 @@ if project_root not in sys.path:
 import numpy as np
 import pandas as pd
 import pickle
+import time
 
 # ---------------------------------------------------------------------
 # Helper: enforce uniform decimal display (e.g. 0.63, 2.57, …)
@@ -75,18 +76,20 @@ display(cbs_df.describe(include="all").T)  # summary stats
 # -- 3. Running MCMC for model estimation M1 and M2
 # ------------------------------------------------------------------
 # Estimate Model M1 (no covariates)
+start_m1 = time.time()
 draws_3pI = mcmc_draw_parameters_rfm_m(
     cal_cbs    = cbs_df,
     covariates = None,      # intercept‐only
-    mcmc       = 5000,
-    burnin     = 5000,
-    thin       = 50,
-    chains     = 2,
-    seed       = 123,
-    trace      = 100,
+    mcmc=4000,      # 4000 total iterations
+    burnin=10000,   # discard the first 10 000 as warm-up
+    thin=1,         # keep every draw; 4 000 draws after burn-in
+    chains=2,
+    seed=42,
+    trace=1000,
     n_mh_steps = 20,
 )
-
+m1_duration = time.time() - start_m1
+print(f"Model M1 runtime: {m1_duration:.2f} seconds")
 # Ensure the pickles directory exists at the project root
 pickles_dir = os.path.join(project_root, "outputs", "pickles")
 os.makedirs(pickles_dir, exist_ok=True)
@@ -109,19 +112,53 @@ covariate_cols = ["gender_F", "age_scaled"]
 print("Data shape:", cbs_df.shape)
 print("Using covariates:", covariate_cols)
 
+# Estimate Model M2 
+# Track runtime for Model M2
+start_m2 = time.time()
 draws_3pII = mcmc_draw_parameters_rfm_m(
     cal_cbs    = cbs_df,
-    covariates = covariate_cols,
-    mcmc       = 5000,
-    burnin     = 5000,
-    thin       = 50,
-    chains     = 2,
-    seed       = 42,
-    trace      = 500
+    mcmc    =   4000,     # 14 000 total iterations
+    burnin  =   10000,   # discard the first 10 000 as warm-up
+    thin    =   1,         # keep every draw; 4 000 draws after burn-in
+    chains  =   2,
+    seed    =   42,
+    trace   =   1000,
+    n_mh_steps = 20,
 )
+m2_duration = time.time() - start_m2
+print(f"Model M2 runtime: {m2_duration:.2f} seconds")
+
+# Saving result M2
 # Ensure the pickles directory exists at the project root
 pickles_dir = os.path.join(project_root, "outputs", "pickles")
 os.makedirs(pickles_dir, exist_ok=True)
 with open(os.path.join(pickles_dir, "full_trivariate_M2.pkl"), "wb") as f:
     pickle.dump(draws_3pII, f)
 # ------------------------------------------------------------------
+
+# Print runtimes
+runtimes = pd.DataFrame({
+    "model":   ["M1",           "M2"],
+    "runtime": [m1_duration,    m2_duration]
+})
+
+# Save runtimes CSV and update 
+csv_path = os.path.join(project_root, "outputs", "excel", "mcmc_runtimes.csv")
+os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+if os.path.exists(csv_path):
+    df_runs = pd.read_csv(csv_path)
+else:
+    df_runs = pd.DataFrame(columns=["model", "runtime"])
+for model_name, runtime in [
+    ("full_tri_M1", m1_duration),
+    ("full_tri_M2", m2_duration)
+]:
+    # Remove any old entry for this model
+    df_runs = df_runs[df_runs.model != model_name]
+    # Append the new timing
+    df_runs = pd.concat(
+        [df_runs, pd.DataFrame([{"model": model_name, "runtime": runtime}])],
+        ignore_index=True
+    )
+df_runs.to_csv(csv_path, index=False)
+print(f"Saved runtimes to {csv_path}")

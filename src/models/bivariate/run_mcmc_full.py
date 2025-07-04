@@ -21,6 +21,7 @@ if project_root not in sys.path:
 import numpy as np
 import pandas as pd
 import pickle
+import time
 from IPython.display import display
 
 # Import custom modules for data processing
@@ -35,21 +36,25 @@ from src.models.bivariate.mcmc import (
 cbs = pd.read_csv(os.path.join(project_root, "data", "processed", "cdnow_cbs_full.csv"))
 # ------------------------------------------------------------------
 
-# %% 3. Running MCMC for model estimation M1
-# -- 3. Running MCMC for model estimation M1
+# %% 2. Running MCMC for model estimation M1
+# -- 2. Running MCMC for model estimation M1
 # ------------------------------------------------------------------
 # Estimate Model M1 (no covariates)
+# Track runtime for Model M1
+start_m1 = time.time()
 draws_m1 = mcmc_draw_parameters(
     cal_cbs=cbs,
     covariates=[],
-    mcmc=4000,
-    burnin=10000,
-    thin=50,
+    mcmc=4000,      # 4000 total iterations
+    burnin=10000,   # discard the first 10 000 as warm-up
+    thin=1,         # keep every draw; 4 000 draws after burn-in
     chains=2,
     seed=42,
-    trace=1000
+    trace=1000,
+    n_mh_steps = 20,
 )
-
+m1_duration = time.time() - start_m1
+print(f"Model M1 runtime: {m1_duration:.2f} seconds")
 # ------------------------------------------------------------------
 # Saving result M1
 # Ensure the pickles directory exists at the project root
@@ -60,8 +65,8 @@ os.makedirs(pickles_dir, exist_ok=True)
 with open(os.path.join(pickles_dir, "full_bivariate_M1.pkl"), "wb") as f:
     pickle.dump(draws_m1, f)
 # ------------------------------------------------------------------
-# %% 4. Running MCMC for model estimation M2
-# -- 4. Running MCMC for model estimation M2
+# %% 3. Running MCMC for model estimation M2
+# -- 3. Running MCMC for model estimation M2
 # ------------------------------------------------------------------
 # Append dollar amount of first purchase to use as covariate (like in R)
 data_path = os.path.join(project_root, "data", "raw", "cdnow_purchases.csv")
@@ -81,16 +86,21 @@ std_val = cbs["first_sales"].std()
 cbs["first_sales_scaled"] = (cbs["first_sales"] - mean_val) / std_val
 
 # Estimate Model M2 (with first_sales)
+# Track runtime for Model M2
+start_m2 = time.time()
 draws_m2 = mcmc_draw_parameters(
-    cal_cbs=cbs,
-    covariates=["first_sales_scaled"],
-    mcmc=4000,
-    burnin=10000,
-    thin=50,
-    chains=2,
-    seed=42,
-    trace=500
+    cal_cbs =   cbs,
+    covariates =["first_sales_scaled"],  # Parameters to replicate Abe 2009
+    mcmc    =   4000,     # 14 000 total iterations
+    burnin  =   10000,   # discard the first 10 000 as warm-up
+    thin    =   1,         # keep every draw; 4 000 draws after burn-in
+    chains  =   2,
+    seed    =   42,
+    trace   =   1000,
+    n_mh_steps = 20,
 )
+m2_duration = time.time() - start_m2
+print(f"Model M2 runtime: {m2_duration:.2f} seconds")
 
 # Saving result M2
 # Ensure the pickles directory exists at the project root
@@ -104,4 +114,31 @@ with open(os.path.join(pickles_dir, "full_bivariate_M2.pkl"), "wb") as f:
 # Save the CBS DataFrame
 with open(os.path.join(pickles_dir, "cbs_full_bivariate_data.pkl"), "wb") as f:
     pickle.dump(cbs, f)
+
+# Print runtimes
+runtimes = pd.DataFrame({
+    "model":   ["M1",           "M2"],
+    "runtime": [m1_duration,    m2_duration]
+})
+
+# Save runtimes CSV and update 
+csv_path = os.path.join(project_root, "outputs", "excel", "mcmc_runtimes.csv")
+os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+if os.path.exists(csv_path):
+    df_runs = pd.read_csv(csv_path)
+else:
+    df_runs = pd.DataFrame(columns=["model", "runtime"])
+for model_name, runtime in [
+    ("full_bi_M1", m1_duration),
+    ("full_bi_M2", m2_duration)
+]:
+    # Remove any old entry for this model
+    df_runs = df_runs[df_runs.model != model_name]
+    # Append the new timing
+    df_runs = pd.concat(
+        [df_runs, pd.DataFrame([{"model": model_name, "runtime": runtime}])],
+        ignore_index=True
+    )
+df_runs.to_csv(csv_path, index=False)
+print(f"Saved runtimes to {csv_path}")
 # ------------------------------------------------------------------

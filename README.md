@@ -33,8 +33,9 @@ Abe_MCMC/
 │   │   └── utils/
 │   │       └── elog2cbs2param.py # Utility: event log to CBS conversion
 │   └── full_analysis.py      # Compiling the graphs of the four models on full CDNOW dataset
-├── compare_pickles.py        # sanity check to make sure pickles do differ
-├── detailed_analysis_pickles # second sanity check to really make sure
+├── full_analyis.py           # comparing the four models on full dataset
+├── pickles_compare.py        # sanity check to make sure pickles do differ
+├── pickles_detailed_analysis.py # second sanity check to really make sure
 ├── README.md                 
 └── SETUP_REQUIREMENTS.md     # Setup requirements !!
 ```

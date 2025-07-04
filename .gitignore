@@ -17,3 +17,9 @@ env/
 
 # Ignore macOS system files
 .DS_Store
+
+# Ignore large pickle files (>2GB)
+outputs/pickles/full_bivariate_M1.pkl
+outputs/pickles/full_bivariate_M2.pkl
+outputs/pickles/full_trivariate_M1.pkl
+outputs/pickles/full_trivariate_M2.pkl
