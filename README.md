@@ -113,6 +113,10 @@ The resulting figures will be written to `outputs/figures/convergence/`.
 
 (Figures are saved in `outputs/figures/`)
 
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
 ## Contact
 
-For questions or contributions, please open an issue or submit a pull request.  
+For questions or contributions, please open an issue or submit a pull request.
