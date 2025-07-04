@@ -3,21 +3,12 @@
 # ------------------------------------------------------------------
 #%%
 import requests, io
-import os
 import sys
+import os
+from src.utils.project_root import add_project_root_to_sys_path
+project_root = add_project_root_to_sys_path()
 import pandas as pd
 # ------------------------------------------------------------------
-# Find project root (folder containing "src") )
-# ------------------------------------------------------------------
-cwd = os.getcwd()
-while not os.path.isdir(os.path.join(cwd, 'src')):
-    parent = os.path.dirname(cwd)
-    if parent == cwd:
-        break  # Reached the root of the filesystem
-    cwd = parent
-project_root = cwd
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
 from src.models.utils.elog2cbs2param import elog2cbs
 

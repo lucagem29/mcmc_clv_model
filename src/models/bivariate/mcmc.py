@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.stats import invwishart
+from src.models.utils.elog2cbs2param import elog2cbs
 
 try:
     import arviz as az  # optional – only used when the user asks for diagnostics
@@ -68,27 +69,6 @@ class CustomerCBS:
     def recency(self) -> float:
         return self.t_x
 
-# -----------------------------------------------------------------------------
-# Helper – convert event log to CBS
-# -----------------------------------------------------------------------------
-
-def elog2cbs(elog: pd.DataFrame, T_cal: float) -> pd.DataFrame:
-    """Create RFM‑style summary statistics from an event log.
-
-    Parameters
-    ----------
-    elog : DataFrame with columns ``cust`` and ``t`` (weeks since cohort start).
-    T_cal : float, calibration‑window end (same unit as ``t``).
-    """
-    grouped = elog[elog["t"] <= T_cal].groupby("cust")
-    out = grouped["t"].agg([("x", "count"), ("t_x", "max")]).reset_index()
-
-    # In Abe’s notation x excludes the first purchase (always at t=0)
-    out["x"] = np.clip(out["x"] - 1, 0, None)
-    out["T_cal"] = T_cal
-    return out
-
-# -----------------------------------------------------------------------------
 # Data generator – Abe (2009) exact replica
 # -----------------------------------------------------------------------------
 
