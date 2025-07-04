@@ -44,7 +44,7 @@ from src.models.trivariate.mcmc import mcmc_draw_parameters_rfm_m
 # Define the relative or absolute path to the data directory.
 # Adjust if your notebook sits elsewhere.
 # ------------------------------------------------------------------------
-FILE_CBS = os.path.join(project_root, "data", "processed", "cdnow_cbs_full.csv")
+FILE_CBS = os.path.join(project_root, "data", "processed", "cdnow_cbs_customers.csv")
 
 # ------------------------------------------------------------------------
 # Read the CSV.  If the column "first" (first purchase date) exists,
@@ -53,17 +53,9 @@ FILE_CBS = os.path.join(project_root, "data", "processed", "cdnow_cbs_full.csv")
 parse_cols = ["first"] if "first" in pd.read_csv(FILE_CBS, nrows=0).columns else None
 cbs_df = pd.read_csv(FILE_CBS, parse_dates=parse_cols)
 
-# assume `sales` is total spend in calibration 
-# and `x` is # of repeat transactions (i.e. excluding the first purchase)
-# so (x+1) = total # of purchases in calib window
-cbs_df["log_s"] = np.log( cbs_df["sales"] / (cbs_df["x"] + 1) )
-
-# clean up infinities / NaNs (customers with zero spend)
-cbs_df["log_s"] = (
-    cbs_df["log_s"]
-    .replace(-np.inf, 0.0)
-    .fillna(0.0)
-)
+# compute average spend per transaction and log-spend for the spend model
+cbs_df['avg_spend'] = cbs_df['sales'] / (cbs_df['x'] + 1)
+cbs_df['log_s'] = np.log(cbs_df['avg_spend']).replace(-np.inf, 0.0).fillna(0.0)
 
 # Quick sanity checks
 print("Shape:", cbs_df.shape)       # rows, columns
@@ -90,7 +82,7 @@ draws_3pI = mcmc_draw_parameters_rfm_m(
 # Ensure the pickles directory exists at the project root
 pickles_dir = os.path.join(project_root, "outputs", "pickles")
 os.makedirs(pickles_dir, exist_ok=True)
-with open(os.path.join(pickles_dir, "full_trivariate_M1.pkl"), "wb") as f:
+with open(os.path.join(pickles_dir, "trivariate_M1.pkl"), "wb") as f:
     pickle.dump(draws_3pI, f)
 
 # ------------------------------------------------------------------
@@ -122,6 +114,6 @@ draws_3pII = mcmc_draw_parameters_rfm_m(
 # Ensure the pickles directory exists at the project root
 pickles_dir = os.path.join(project_root, "outputs", "pickles")
 os.makedirs(pickles_dir, exist_ok=True)
-with open(os.path.join(pickles_dir, "full_trivariate_M2.pkl"), "wb") as f:
+with open(os.path.join(pickles_dir, "trivariate_M2.pkl"), "wb") as f:
     pickle.dump(draws_3pII, f)
 # ------------------------------------------------------------------

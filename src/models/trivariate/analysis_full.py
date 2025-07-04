@@ -60,7 +60,7 @@ cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
 # ------------------------------------------------------------------
 
 DATA_DIR = os.path.join(project_root, "data", "processed") 
-FILE_CBS_PATH = os.path.join(DATA_DIR, "cdnow_cbs_customers.csv")
+FILE_CBS_PATH = os.path.join(DATA_DIR, "cdnow_cbs_full.csv")
 
 parse_cols = ["first"] if "first" in pd.read_csv(FILE_CBS_PATH, nrows=0).columns else None
 cbs_df = pd.read_csv(FILE_CBS_PATH, parse_dates=parse_cols)
@@ -78,7 +78,7 @@ cbs_df["log_s"] = (
 )
 
 #%% 3. Table 2 – HB RFM model-fit metrics (no covariates vs. gender + age) --
-# * cbs_df        : CBS table already in memory (2357 × …)
+# * cbs_df        : CBS table already in memory (23570 × …)
 # * cdnowElog.csv : full event-log (raw transactions)
 # * draws_3pI     : intercept-only RFM–M draws   (m0  – “no cov”)
 # * draws_3pII    : gender_F + age_scaled draws  (m1  – “with cov”)
@@ -204,6 +204,16 @@ table2 = table2.reindex(row_order)
 table2_disp = table2.reset_index().rename(columns={"index": ""})
 print("\nTable 2. Model-fit – HB RFM, CDNOW dataset")
 display(table2_disp)
+
+#--------------------------------------------------------------------------------
+# Make sure the loaded est. data is correct / does actually differ (althought just so slightly)
+stats_0 = compute_metrics(draws_3pI,  "HB RFM (no cov)")
+stats_1 = compute_metrics(draws_3pII, "HB RFM (+ gender & age)")
+
+print("To verify that the loaded estimates are correct, and do differ (slightly):")
+print("Raw stats M1:", stats_0)
+print("Raw stats M2:", stats_1)
+
 
 # %% Figure 2 – Weekly cumulative repeat transactions
 # ----------------------------------------------------

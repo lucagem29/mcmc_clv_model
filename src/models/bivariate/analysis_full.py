@@ -1,10 +1,7 @@
 # ------------------------------------------------------------------
 # this script extends the analysis from Abe (2009) with the whole CDNOW dataset
 # ------------------------------------------------------------------
-#%% 
-# ------------------------------------------------------------------
-# this script reproduces the analysis from Abe (2009)
-# ------------------------------------------------------------------
+
 # %% 1. Import necessary libraries & set project root & custom modules & helper function
 # -- 1. Import necessary libraries & set project root & custom modules & helper function --
 # ------------------------------------------------------------------
@@ -65,7 +62,7 @@ with open(os.path.join(pickles_dir, "full_bivariate_M2.pkl"), "rb") as f:
 with open(os.path.join(pickles_dir, "cbs_full_bivariate_data.pkl"), "rb") as f:
     cbs = pickle.load(f)
 
-data_path = os.path.join(project_root, "data", "processed", "cdnow_purchases.csv")
+data_path = os.path.join(project_root, "data", "raw", "cdnow_purchases.csv")
 
 cdnowElog = pd.read_csv(data_path)
 # Convert date column to datetime
