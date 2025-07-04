@@ -84,6 +84,17 @@ Abe_MCMC/
   ```
   and open any notebook in the `notebooks/` directory (if present).
 
+### Convergence Diagnostics
+
+If you have the pickled MCMC draws available, you can compute basic
+convergence statistics and generate trace/autocorrelation plots:
+
+```bash
+python -m src.convergence_diagnostics
+```
+
+The resulting figures will be written to `outputs/figures/convergence/`.
+
 ## Results
 
 - **Excel summaries**: All tables (Tables 1–4) are saved in `excel/`.
