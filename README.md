@@ -6,13 +6,13 @@ Furthermore, it contains the three parameter extention, suggested by Abe 2015.
 ## Repository Structure
 
 ```
-Abe_MCMC/
+mcmc_clv_model/
 ├── data/
 │   ├── raw/                  # Raw input data
 │   └── processed/            # Processed data
 ├── outputs/
 │   ├── excel/                # Generated Excel summaries and tables
-│   ├── figures/              # Generated figures and plots of abe data --> TO DO TO UPDATE IN SUBFOLDER
+│   ├── figures/              # Generated figures and plots
 │   │   ├── full_cdnow/       # containing plots of individual analyis on full dataset
 │   │   └── full_cdnow_both/  # containing plots of four model comparison
 │   └── pickles/              # Saved MCMC draws and model outputs
@@ -45,6 +45,7 @@ Abe_MCMC/
   ```bash
   pip install numpy pandas scipy matplotlib seaborn jupyter openpyxl lifetimes arviz
   ```
+- After cloning the repository run `git lfs pull` to fetch the pickled model files.
 
 ## Usage
 

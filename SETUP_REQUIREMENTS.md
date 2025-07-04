@@ -1,4 +1,4 @@
-# Abe_MCMC Project Setup Requirements
+# mcmc_clv_model Project Setup Requirements
 
 ## Overview
 This project uses Git LFS (Large File Storage) to manage large pickle files containing MCMC results. Follow these steps to properly set up your environment.
@@ -59,8 +59,8 @@ pip install numpy git-lfs pickle5
 ### 1. Clone Repository and Download LFS Files:
 ```bash
 # Clone the repository
-git clone [repository-url] Abe_MCMC
-cd Abe_MCMC
+git clone [repository-url] mcmc_clv_model
+cd mcmc_clv_model
 
 # Download all LFS files
 git lfs pull
@@ -95,7 +95,7 @@ print(f"Successfully loaded: {type(draws_m1)}")
 **Cause**: Git LFS files not downloaded (you have pointer files instead of actual data)
 **Solution**: 
 ```bash
-cd Abe_MCMC
+cd mcmc_clv_model
 git lfs pull
 ```
 
@@ -113,7 +113,7 @@ git lfs pull
 
 ## File Structure
 ```
-Abe_MCMC/
+mcmc_clv_model/
 ├── outputs/
 │   └── pickles/
 │       ├── bivariate_M1.pkl      (~12MB)
@@ -151,8 +151,8 @@ source prob_mcmc/bin/activate
 pip install numpy git-lfs
 
 # Clone and setup project (replace with actual repo URL)
-# git clone [your-repo-url] Abe_MCMC
-# cd Abe_MCMC
+# git clone [your-repo-url] mcmc_clv_model
+# cd mcmc_clv_model
 # git lfs pull
 
 echo "Setup complete! Remember to activate your virtual environment before using the project."
