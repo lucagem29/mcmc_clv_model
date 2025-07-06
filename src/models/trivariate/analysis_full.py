@@ -141,11 +141,11 @@ def compute_metrics(draws: dict, label: str) -> dict[str, float]:
         ch, idx = divmod(d, draws_per_chain)
         lam_d = draws["level_1"][ch][idx, :, 0]
         mu_d  = draws["level_1"][ch][idx, :, 1]
-        tau_d = draws["level_1"][ch][idx, :, 2]
+        eta_d = draws["level_1"][ch][idx, :, 2]
 
         rng = np.random.default_rng(d)
         for t_idx, t in enumerate(times):
-            active = (t > birth_week) & (t <= (birth_week + tau_d))
+            active = (t > birth_week) & (t <= (birth_week + eta_d))
             inc_weekly[t_idx] += rng.poisson(lam=lam_d * active).sum()
 
     inc_weekly /= n_draws
@@ -241,11 +241,11 @@ def posterior_cumulative(draws: dict, label: str) -> np.ndarray:
         ch, idx = divmod(d, draws_per_chain)
         lam_d = draws["level_1"][ch][idx, :, 0]
         mu_d  = draws["level_1"][ch][idx, :, 1]
-        tau_d = draws["level_1"][ch][idx, :, 2]
+        eta_d = draws["level_1"][ch][idx, :, 2]
 
         rng = np.random.default_rng(d)            # draw-specific seed
         for t_idx, t in enumerate(times):
-            active = (t > birth_week) & (t <= birth_week + tau_d)
+            active = (t > birth_week) & (t <= birth_week + eta_d)
             inc_weekly[t_idx] += rng.poisson(lam=lam_d * active).sum()
 
     inc_weekly /= n_total_draws                   # posterior mean

@@ -34,6 +34,25 @@ from src.models.bivariate.mcmc import (
 )
 
 cbs = pd.read_csv(os.path.join(project_root, "data", "processed", "cdnow_cbs_full.csv"))
+# df for covariates implementation
+cbs_df = cbs
+
+# assume `sales` is total spend in calibration 
+# and `x` is # of repeat transactions (i.e. excluding the first purchase)
+# so (x+1) = total # of purchases in calib window
+cbs_df["log_s"] = np.log( cbs_df["sales"] / (cbs_df["x"] + 1) )
+
+# clean up infinities / NaNs (customers with zero spend)
+cbs_df["log_s"] = (
+    cbs_df["log_s"]
+    .replace(-np.inf, 0.0)
+    .fillna(0.0)
+)
+
+# Quick sanity checks
+print("Shape:", cbs_df.shape)       # rows, columns
+display(cbs_df.head())              # first five rows
+display(cbs_df.describe(include="all").T)  # summary stats
 # ------------------------------------------------------------------
 
 # %% 2. Running MCMC for model estimation M1
@@ -68,7 +87,8 @@ with open(os.path.join(pickles_dir, "full_bivariate_M1.pkl"), "wb") as f:
 # %% 3. Running MCMC for model estimation M2
 # -- 3. Running MCMC for model estimation M2
 # ------------------------------------------------------------------
-# Append dollar amount of first purchase to use as covariate (like in R)
+
+# Merge first purchase amount into cbs_df
 data_path = os.path.join(project_root, "data", "raw", "cdnow_purchases.csv")
 cdnowElog = pd.read_csv(data_path)
 
@@ -78,19 +98,45 @@ first = (
     .rename(columns={"sales": "first_sales"})
 )
 first["first_sales"] = first["first_sales"] * 1e-3   # scale to $10^-3
-cbs = pd.merge(cbs, first[["cust", "first_sales"]], on="cust", how="left")
+cbs_df = pd.merge(
+    cbs_df,
+    first[["cust", "first_sales"]],
+    on="cust",
+    how="left"
+)
 
-# Normalize first_sales
-mean_val = cbs["first_sales"].mean()
-std_val = cbs["first_sales"].std()
-cbs["first_sales_scaled"] = (cbs["first_sales"] - mean_val) / std_val
+# Normalize first_sales in cbs_df
+mean_val = cbs_df["first_sales"].mean()
+std_val  = cbs_df["first_sales"].std()
+cbs_df["first_sales_scaled"] = (
+    cbs_df["first_sales"] - mean_val
+) / std_val
+
+
+# ------------------------------------------------------------------
+# gender_F  --------------------------------------------------------------
+if "gender_F" not in cbs_df.columns:
+    if "gender_binary" in cbs_df.columns:          # 1 = M, 0 = F
+        cbs_df["gender_F"] = 1 - cbs_df["gender_binary"]
+    else:
+        cbs_df["gender_F"] = (cbs_df["gender"] == "F").astype(int)
+
+# age_scaled -------------------------------------------------------------
+if "age_scaled" not in cbs_df.columns:
+    cbs_df["age_scaled"] = (cbs_df["age"] - cbs_df["age"].mean()) / cbs_df["age"].std()
+
+# ------------------------------------------------------------------
+# Covariates for Model M2
+covariate_cols = ["first_sales_scaled", "gender_F", "age_scaled"]
+print("Data shape:", cbs_df.shape)
+print("Using covariates:", covariate_cols)
 
 # Estimate Model M2 (with first_sales)
 # Track runtime for Model M2
 start_m2 = time.time()
 draws_m2 = mcmc_draw_parameters(
-    cal_cbs =   cbs,
-    covariates =["first_sales_scaled"],  # Parameters to replicate Abe 2009
+    cal_cbs =   cbs_df,
+    covariates = covariate_cols,  # Parameters to replicate Abe 2009
     mcmc    =   4000,     # 14 000 total iterations
     burnin  =   10000,   # discard the first 10 000 as warm-up
     thin    =   1,         # keep every draw; 4 000 draws after burn-in
@@ -142,3 +188,4 @@ for model_name, runtime in [
 df_runs.to_csv(csv_path, index=False)
 print(f"Saved runtimes to {csv_path}")
 # ------------------------------------------------------------------
+# %%
