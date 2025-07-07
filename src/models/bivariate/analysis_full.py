@@ -70,6 +70,8 @@ print(f"Loading Elog data from: {data_path}")
 cdnowElog = pd.read_csv(data_path)
 # Convert date column to datetime
 cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
+# ensure the same key type
+cdnowElog["cust"] = cdnowElog["cust"].astype(str)
 
 # %% 3. Descriptive Statistics
 # -- 3. Descriptive Statistics --
