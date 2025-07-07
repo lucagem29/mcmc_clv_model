@@ -191,7 +191,7 @@ def generate_pareto_abe(
 
     beta = np.asarray(beta, dtype=float)
     K, D = beta.shape
-    assert D == 3, "beta must have three columns (log‑lambda, log‑mu, log-eta)"
+    assert D == 2, "beta must have three columns (log‑lambda, log‑mu)"
 
     # --- covariates X_i ------------------------------------------------------
     if covars is None:

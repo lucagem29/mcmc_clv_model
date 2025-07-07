@@ -68,6 +68,8 @@ data_path = os.path.join(project_root, "data", "raw", "cdnow_abeElog.csv")
 cdnowElog = pd.read_csv(data_path)
 # Convert date column to datetime
 cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
+# ensure the same key type
+cdnowElog["cust"] = cdnowElog["cust"].astype(str)
 # ------------------------------------------------------------------
 # %% 3. Descriptive Statistics
 # -- 3. Descriptive Statistics --
@@ -518,6 +520,7 @@ plt.title("Figure 3: Conditional Expectation of Future Transactions for CDNOW Da
 plt.legend()
 plt.savefig(os.path.join(project_root, "outputs", "figures", "abe_replication", "Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
 plt.show()
+
 # -------------------------------------------------------------------
 # Figure 4: Scatter plot of posterior means of λ and μ  (HB‑M1, paper style)
 # -------------------------------------------------------------------
