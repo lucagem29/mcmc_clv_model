@@ -1,4 +1,4 @@
-id,zone,state,gender,age_category,age
+cust,zone,state,gender,age_category,age
 1,Pacific,Oregon,M,young,26
 2,Eastern,New Jersey,M,medium,36
 3,Central,Minnesota,M,young,17

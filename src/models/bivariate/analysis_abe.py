@@ -29,40 +29,42 @@ import pandas as pd
 import pickle
 
 # Add lifetimes ParetoNBDFitter for MLE baseline
-from lifetimes import ParetoNBDFitter
-
-from scipy.special import gammaln  # for log‑factorial constant
+from lifetimes import ParetoNBDFitter  
 from IPython.display import display
 
-# Import custom module 
+# Import custom functions 
 from src.models.bivariate.mcmc import draw_future_transactions
+from src.models.utils.analysis_display_helper import _fmt
+from src.models.utils.analysis_bi_helpers import (summarize_level2, 
+                                                  post_mean_lambdas, 
+                                                  post_mean_mus, 
+                                                  mape_aggregate, 
+                                                  extract_correlation, 
+                                                  chain_total_loglik, 
+                                                  compute_table4)
 
-# ---------------------------------------------------------------------
-# Helper: enforce uniform decimal display (e.g. 0.63, 2.57, …)
-# ---------------------------------------------------------------------
-def _fmt(df: pd.DataFrame, dec: int) -> pd.DataFrame:
-    """Return a copy of *df* with all float cells formatted to *dec* decimals."""
-    fmt = f"{{:.{dec}f}}".format
-    return df.applymap(lambda v: fmt(v) if isinstance(v, (float, np.floating)) else v)
-# ------------------------------------------------------------------
-# %% 2. Load estimates and data
+# %% 2. Load estimates and data 
 # -- 2. Load estimates and data --
 # ------------------------------------------------------------------
 # --- Load Pre-computed Results ---
 pickles_dir = os.path.join(project_root, "outputs", "pickles")
 
+# Set Excel output path
+excel_path = os.path.join(project_root, "outputs", "excel", "abe_replication.xlsx")
+os.makedirs(os.path.dirname(excel_path), exist_ok=True)
+
 # Load MCMC draws
-with open(os.path.join(pickles_dir, "bivariate_M1.pkl"), "rb") as f:
+with open(os.path.join(pickles_dir, "abe_bi_m1.pkl"), "rb") as f:
     draws_m1 = pickle.load(f)
-with open(os.path.join(pickles_dir, "bivariate_M2.pkl"), "rb") as f:
+with open(os.path.join(pickles_dir, "abe_bi_m2.pkl"), "rb") as f:
     draws_m2 = pickle.load(f)
 
-# Load the CBS DataFrame
-with open(os.path.join(pickles_dir, "cbs_bivariate_data.pkl"), "rb") as f:
-    cbs = pickle.load(f)
+# Load CBS data
+cbs_path = os.path.join(project_root, "data", "processed", "cdnow_abeCBS.csv")
+cbs = pd.read_csv(cbs_path, dtype={"cust": str}, parse_dates=["first"])
 
-data_path = os.path.join(project_root, "data", "processed", "cdnowElog.csv")
-
+# Load Elog data
+data_path = os.path.join(project_root, "data", "raw", "cdnow_abeElog.csv")
 cdnowElog = pd.read_csv(data_path)
 # Convert date column to datetime
 cdnowElog["date"] = pd.to_datetime(cdnowElog["date"])
@@ -110,24 +112,13 @@ print("Table 1. Descriptive Statistics for CDNOW dataset")
 print(table1_stats.round(2))
 display(table1_stats)
 
-
-# Set the path for the Excel file in the project root's 'excel' folder
-excel_path = os.path.join(project_root, "outputs", "excel", "bivariate_estimation_summaries.xlsx")
-os.makedirs(os.path.dirname(excel_path), exist_ok=True)
-
 # Save the DataFrame to the Excel file
 with pd.ExcelWriter(excel_path, engine="openpyxl", mode="w") as writer:
     table1_stats.to_excel(writer, sheet_name="Table 1")
 # ------------------------------------------------------------------
+
 # %% 4. Compute metrics and predictions
 # -- 4. Compute metrics and predictions --
-# ------------------------------------------------------------------
-
-# Function to summarize level 2 draws
-def summarize_level2(draws_level2: np.ndarray, param_names: list[str], decimals: int = 2) -> pd.DataFrame:
-    quantiles = np.percentile(draws_level2, [2.5, 50, 97.5], axis=0)
-    summary = pd.DataFrame(quantiles.T, columns=["2.5%", "50%", "97.5%"], index=param_names)
-    return summary.round(decimals)
 
 # Parameter names for Model 1 (M1): no covariates
 param_names_m1 = [
@@ -176,16 +167,6 @@ summary_m2.index = [
 ] # type: ignore
 
 # ------------------------------------------------------------------
-
-# Compute posterior means of λ and μ
-def post_mean_lambdas(draws):
-    all_draws = np.concatenate(draws["level_1"], axis=0)
-    return all_draws[:, :, 0].mean(axis=0)
-
-def post_mean_mus(draws):
-    all_draws = np.concatenate(draws["level_1"], axis=0)
-    return all_draws[:, :, 1].mean(axis=0)
-
 # Closed-form expected x_star for validation
 t_star = 39.0
 mean_lambda_m1 = post_mean_lambdas(draws_m1)
@@ -248,8 +229,6 @@ weekly_actual = (
     repeat_txns.groupby("week")["cust"].count()
     .reindex(range(1, max_week+1), fill_value = 0))
 
-cum_pnbd_ml = np.zeros_like(times, dtype=float)
-
 # ------------------------------------------------------------------
 # Table 2 – Model‑fit metrics
 # ------------------------------------------------------------------
@@ -284,18 +263,8 @@ weeks_val_mask = (times >= 40) & (times <= 78)
 
 actual_weekly = weekly_actual.reindex(times, fill_value=0).to_numpy()
 
-def mape_aggregate(actual, pred):
-    """
-    Abe (2009) time‑series MAPE:
-        (1/N) Σ_t |Ĉ(t) − C(t)|  divided by  C(T)   ×100.
-    This down‑weights early weeks (matching the paper’s numbers).
-    """
-    cum_a = np.cumsum(actual)
-    cum_p = np.cumsum(pred)
-    abs_error = np.abs(cum_p - cum_a)
-    return abs_error.mean() / cum_a[-1] * 100
-
 # Weekly PNB (MLE) increments
+cum_pnbd_ml = np.zeros_like(times, dtype=float)
 inc_pnbd_weekly = np.empty_like(times, dtype=float)
 inc_pnbd_weekly[0] = cum_pnbd_ml[0]
 inc_pnbd_weekly[1:] = np.diff(cum_pnbd_ml)
@@ -361,13 +330,6 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
 # %% 6. Construct Table 3: Estimation Results
 # -- 6. Construct Table 3: Estimation Results --
 # ------------------------------------------------------------------
-# --- Compute correlation between log_lambda and log_mu from posterior (for both models) ---
-def extract_correlation(draws_level2):
-    cov = draws_level2[:, -2]  # cov_log_lambda_mu
-    var_lambda = draws_level2[:, -3]
-    var_mu = draws_level2[:, -1]
-    corr = cov / np.sqrt(var_lambda * var_mu)
-    return np.percentile(corr, [2.5, 50, 97.5]).round(2)
 
 corr_m1 = extract_correlation(np.array(draws_m1["level_2"][0]))
 corr_m2 = extract_correlation(np.array(draws_m2["level_2"][0]))
@@ -381,27 +343,6 @@ correlation_row = pd.DataFrame({
     ("HB M2 (with a covariate)", "50%"): [corr_m2[1]],
     ("HB M2 (with a covariate)", "97.5%"): [corr_m2[2]],
 }, index=["Correlation computed from Γ₀"])
-
-# --- compute chain‑averaged log‑likelihood ---------------------------------
-def chain_total_loglik(level1_chains, cbs):
-    """Return average over draws of Σ_i log L_i."""
-    x = cbs["x"].to_numpy()
-    T_cal = cbs["T_cal"].to_numpy()
-    totals = []
-    for chain in level1_chains:
-        for draw in chain:            # draw shape (N, 4)
-            lam = draw[:, 0]
-            mu  = draw[:, 1]
-            tau = draw[:, 2]
-            z   = draw[:, 3] > 0.5
-            ll_vec = (
-                x * np.log(lam)
-                + (1 - z) * np.log(mu)
-                - (lam + mu) * (z * T_cal + (1 - z) * tau)
-                - gammaln(x + 1)            # remove constant term for comparability
-            )
-            totals.append(ll_vec.sum())
-    return np.mean(totals)
 
 ll_m1 = chain_total_loglik(draws_m1["level_1"], cbs).round(0)
 ll_m2 = chain_total_loglik(draws_m2["level_1"], cbs).round(0)
@@ -462,94 +403,6 @@ with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="re
 xstar_m1_draws = draw_future_transactions(cbs, draws_m1, T_star=t_star, seed=42)
 xstar_m2_draws = draw_future_transactions(cbs, draws_m2, T_star=t_star, seed=42)
 
-def compute_table4(draws, xstar_draws):
-    # Average over all level_1 draws from all chains
-    all_draws = np.concatenate(draws["level_1"], axis=0)  # shape: (n_draws, n_customers, 4)
-    
-    # Compute posterior means across all draws for each parameter
-    mean_lambda = all_draws[:, :, 0].mean(axis=0)
-
-    # --- posterior μ --------------------------------------------------------
-    # Use a light cap (0.05) when averaging to prevent a few extreme draws
-    mu_draws_raw = all_draws[:, :, 1]
-    mu_draws_cap = np.clip(mu_draws_raw, None, 0.05)   # gentle cap for means
-    # Posterior **mean** of μ uses the capped draws to dampen a few extremes,
-    # but the uncertainty intervals (2.5 %, 97.5 %) must be computed on the
-    # *raw* draws – otherwise the upper tail is artificially flattened.
-    mean_mu = mu_draws_cap.mean(axis=0)
-
-    mu_2_5  = np.percentile(mu_draws_raw,  2.5, axis=0)
-    mu_97_5 = np.percentile(mu_draws_raw, 97.5, axis=0)
-
-    mean_z = all_draws[:, :, 3].mean(axis=0)
-    t_star = 39
-    # Expected repeats in validation window *unconditional* on survival:
-    #   E[X*] = P(alive at T_cal) · λ/μ · (1 - e^{-μ·t})
-    mean_xstar = (
-        mean_z
-        * (mean_lambda / mean_mu)
-        * (1.0 - np.exp(-mean_mu * t_star))
-    )
-
-    # Formula (9): Expected lifetime = 1 / μ, convert weeks to years (divide by 52)
-    mean_lifetime = np.where(mean_mu > 0, (1.0 / mean_mu) / 52.0, np.inf)
-
-    # Formula (10): 1-year survival rate = exp(-52 * μ), where 52 weeks = 1 year
-    surv_1yr = np.exp(-mean_mu * 52)
-
-    # Posterior percentiles for λ (unchanged); μ percentiles now from uncapped draws
-    lambda_draws = all_draws[:, :, 0]
-    lambda_2_5 = np.percentile(lambda_draws, 2.5, axis=0)
-    lambda_97_5 = np.percentile(lambda_draws, 97.5, axis=0)
-
-    df = pd.DataFrame({
-        "Mean(λ)": mean_lambda,
-        "2.5% tile λ": lambda_2_5,
-        "97.5% tile λ": lambda_97_5,
-        "Mean(μ)": mean_mu,
-        "2.5% tile μ": mu_2_5,
-        "97.5% tile μ": mu_97_5,
-        "Mean exp lifetime (yrs)": mean_lifetime,
-        "Survival rate (1yr)": surv_1yr,
-        "P(alive at T_cal)": mean_z,
-        "Exp # of trans in val period": mean_xstar
-    })
-    df.index.name = "Customer ID"
-
-    # Rank customers by expected transactions (high → low) and
-    # assign sequential IDs 1…N exactly like Abe (2009)
-    df_sorted = (
-        df.sort_values("Exp # of trans in val period",
-                       ascending=False)          # high → low, paper order
-          .reset_index(drop=True)                # throw away original cust nums
-    )
-    df_sorted.insert(0, "ID", df_sorted.index + 1)   # 1‑based rank ID
-    top10    = df_sorted.iloc[:10]
-    bottom10 = df_sorted.iloc[-10:]
-    ave_row  = df.mean().to_frame().T.assign(ID="Ave")
-    min_row  = df.min().to_frame().T.assign(ID="Min")
-    max_row  = df.max().to_frame().T.assign(ID="Max")
-
-    # Concatenate in paper order
-    df_paper = (
-        pd.concat([top10, pd.DataFrame({"ID":["…"]}), bottom10,
-                   ave_row, min_row, max_row], ignore_index=True)
-          .set_index("ID")
-    )
-
-    # --- column‑specific rounding to match Abe (2009) print layout ----------
-    lambda_cols = ["Mean(λ)", "2.5% tile λ", "97.5% tile λ"]
-    mu_cols     = ["Mean(μ)", "2.5% tile μ", "97.5% tile μ"]
-
-    df_paper[lambda_cols] = df_paper[lambda_cols].round(3)   # e.g. 0.778
-    df_paper[mu_cols]     = df_paper[mu_cols].round(4)       # e.g. 0.0187
-
-    df_paper["Mean exp lifetime (yrs)"]     = df_paper["Mean exp lifetime (yrs)"].round(2)
-    df_paper["Survival rate (1yr)"]         = df_paper["Survival rate (1yr)"].round(3)
-    df_paper["P(alive at T_cal)"]           = df_paper["P(alive at T_cal)"].round(3)
-    df_paper["Exp # of trans in val period"] = df_paper["Exp # of trans in val period"].round(2)
-
-    return df_paper
 
 
 table4 = compute_table4(draws_m2, xstar_m2_draws)
@@ -583,6 +436,9 @@ for t_idx, t in enumerate(times):
     cum_pnbd_ml[t_idx] = exp_per_cust.sum()
 
 # --- Posterior‑predictive HB curve -----------------------------------------
+# Reset inc_hb_weekly to zero for Figure 2 calculation
+inc_hb_weekly = np.zeros_like(times, dtype=float)
+
 n_draws = len(xstar_m2_draws)
 
 for d in range(n_draws):
@@ -614,7 +470,7 @@ plt.xlabel("Week")
 plt.ylabel("Cumulative repeat transactions")
 plt.title("Figure 2: Weekly Time-Series Tracking for CDNOW Data")
 plt.legend()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "abe_replication", "Figure2_weekly_tracking.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # -------------------------------------------------------------------
@@ -660,7 +516,7 @@ plt.xlabel("Number of transactions in weeks 1–39")
 plt.ylabel("Average transactions in weeks 40–78")
 plt.title("Figure 3: Conditional Expectation of Future Transactions for CDNOW Data")
 plt.legend()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "abe_replication", "Figure3_conditional_expectation.png"), dpi=300, bbox_inches='tight')
 plt.show()
 # -------------------------------------------------------------------
 # Figure 4: Scatter plot of posterior means of λ and μ  (HB‑M1, paper style)
@@ -675,7 +531,7 @@ plt.ylim(0, 0.14)
 plt.xlabel(r"$\lambda$")
 plt.ylabel(r"$\mu$")
 plt.title("Figure 4: Scatter Plot of Posterior Means of λ and μ for CDNOW Data")
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure4_scatter_lambda_mu.png"),
+plt.savefig(os.path.join(project_root, "outputs", "figures", "abe_replication", "Figure4_scatter_lambda_mu.png"),
             dpi=300, bbox_inches="tight")
 plt.show()
 # -------------------------------------------------------------------
@@ -700,7 +556,7 @@ plt.xlim(-0.3, 0.4)
 plt.xlabel("Correlation")
 plt.ylabel("Frequency")
 plt.title("Figure 5: Distribution of Correlation Between log(λ) and log(μ) for CDNOW Data")
-plt.savefig(os.path.join(project_root, "outputs", "figures","Figure5_corr_histogram.png"),
+plt.savefig(os.path.join(project_root, "outputs", "figures", "abe_replication", "Figure5_corr_histogram.png"),
             dpi=300, bbox_inches="tight")
 plt.show()
 # -------------------------------------------------------------------
@@ -732,7 +588,7 @@ for ax in axes:
     ax.grid(False)
 
 plt.tight_layout()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Scatter_M1_M2.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "abe_replication", "Scatter_M1_M2.png"), dpi=300, bbox_inches='tight')
 plt.show()
 
 # -------------------------------------------------------------------
@@ -783,7 +639,7 @@ ax.tick_params(axis='x', colors='#444444')
 
 # Final layout adjustment
 plt.tight_layout()
-plt.savefig(os.path.join(project_root, "outputs", "figures","Alive_vs_Churned.png"), dpi=300, bbox_inches='tight')
+plt.savefig(os.path.join(project_root, "outputs", "figures", "abe_replication", "Alive_vs_Churned.png"), dpi=300, bbox_inches='tight')
 plt.show()
 # -------------------------------------------------------------------
 # 8. Visualize the posterior distributions and traceplots for both models

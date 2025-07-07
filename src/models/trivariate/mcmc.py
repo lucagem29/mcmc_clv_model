@@ -1,4 +1,4 @@
-"""pareto_abe.py
+"""mcmc.py
 Python re-implementation of the hierarchical-Bayes Pareto/NBD variant from
 Abe (2009):
 
@@ -191,7 +191,7 @@ def generate_pareto_abe(
 
     beta = np.asarray(beta, dtype=float)
     K, D = beta.shape
-    assert D == 2, "beta must have two columns (log‑lambda, log‑mu)"
+    assert D == 3, "beta must have three columns (log‑lambda, log‑mu, log-eta)"
 
     # --- covariates X_i ------------------------------------------------------
     if covars is None:

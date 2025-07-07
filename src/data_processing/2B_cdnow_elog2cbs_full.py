@@ -1,11 +1,9 @@
-# ------------------------------------------------------------------
-# this script loads and processes the whole CDNOW dataset
-# ------------------------------------------------------------------
-#%%
-import requests, io
+# %% 1. Import libraries & set up project root
+# -- 1. Import libraries & set up project root --
 import os
 import sys
 import pandas as pd
+
 # ------------------------------------------------------------------
 # Find project root (folder containing "src") )
 # ------------------------------------------------------------------
@@ -19,39 +17,18 @@ project_root = cwd
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Import utility function for converting event log to CBS forma
 from src.models.utils.elog2cbs2param import elog2cbs
 
 # Make sure output directory exists
 output_dir = os.path.join(project_root, "data", "raw")
 os.makedirs(output_dir, exist_ok=True)
 # ------------------------------------------------------------------
-#%% 1. Download and save data from Hugging Face
 
-base = "https://huggingface.co/datasets/ZennyKenny/CDNOW/resolve/main/"
-files = ["purchases.csv", "customers.csv"]
+# %% 2. Load full Elog data & convert to CBS format
+# -- 2. Load full Elog data & convert to CBS format --
 
-dfs = {}
-for fn in files:
-    r = requests.get(base + fn)
-    r.raise_for_status()
-    dfs[fn] = pd.read_csv(io.StringIO(r.text), parse_dates=["date"] if fn=="purchases.csv" else None)
-
-df_purchases = dfs["purchases.csv"]
-df_customers = dfs["customers.csv"]
-# Rename users_id to cust for consistency with CBS data
-df_customers.rename(columns={"users_id": "cust"}, inplace=True)
-df_purchases.rename(columns={"users_id": "cust", "amt": "sales"}, inplace=True)
-
-df_customers.describe()
-df_purchases.describe()
-
-# Save customer characteristics df locally
-df_customers.to_csv(os.path.join(output_dir, "cdnow_customers.csv"), index=False)
-df_purchases.to_csv(os.path.join(output_dir, "cdnow_purchases.csv"), index=False)
-
-# %% 2. Load dataset and convert to CBS format
-# ------ 2. Load dataset and convert to CBS format ------
-data_path = os.path.join(project_root, "data", "raw", "cdnow_purchases.csv")
+data_path = os.path.join(project_root, "data", "raw", "cdnow_fullElog.csv")
 cdnow_full_Elog = pd.read_csv(data_path)
 
 # Convert date column to datetime
@@ -65,19 +42,48 @@ if "first" in cbs_ful.columns:
     cbs_ful["first"] = pd.to_datetime(cbs_ful["first"]).dt.date
 cbs_ful.head()
 
-#%% 3. Merge CBS with customer demographics
+# Load customer demographics & merge with CBS
+data_path = os.path.join(project_root, "data", "raw", "cdnow_fullCovar.csv")
+df_customers = pd.read_csv(data_path)
 
 df_cbs__full_customers = cbs_ful.merge(
     df_customers,
     left_on="cust",
-    right_on="id",
+    right_on="cust",
     how="left"
-).drop(columns=["id"])
+)
 
 print("CBS merged with customer demographics:")
 print(df_cbs__full_customers.head())
 
-#%% 4. Some data processing
+# Some data processing
+
+
+# Compute each customer's first purchase amount and scale
+first = (
+    cdnow_full_Elog
+    .groupby("cust")["sales"]
+    .first()
+    .reset_index()
+    .rename(columns={"sales": "first_sales"})
+)
+# Scale to $10^-3
+first["first_sales"] = first["first_sales"] * 1e-3
+
+# Merge first_sales into the full CBS DataFrame
+df_cbs__full_customers = df_cbs__full_customers.merge(
+    first[["cust", "first_sales"]],
+    on="cust",
+    how="left"
+)
+
+# Normalize first_sales
+mean_fs = df_cbs__full_customers["first_sales"].mean()
+std_fs  = df_cbs__full_customers["first_sales"].std()
+df_cbs__full_customers["first_sales_scaled"] = (
+    df_cbs__full_customers["first_sales"] - mean_fs
+) / std_fs
+
 
 # Scale age (continuous)
 df_cbs__full_customers['age_scaled'] = (
@@ -96,15 +102,18 @@ df_cbs__full_customers['gender_binary'] = df_cbs__full_customers['gender'].map({
     'M': 1,
     'F': 0
 })
-df_cbs__full_customers.drop(columns=['gender', 'zone', 'state', 'age', 'age_category'], inplace=True)
+df_cbs__full_customers.drop(columns=['gender', 'zone', 'state', 'age_category', 'first_sales'], inplace=True)
 
 print(df_cbs__full_customers.head())
+# ------------------------------------------------------------------
 
-#%% 5. Save the enriched CBS
+# %% 3. Save the enriched full CBS
+# -- 3. Save the enriched full CBS --
 output_dir = os.path.join(project_root, "data", "processed")
 os.makedirs(output_dir, exist_ok=True)
-cbs_merge_path = os.path.join(output_dir, "cdnow_cbs_full.csv")
+cbs_merge_path = os.path.join(output_dir, "cdnow_fullCBS.csv")
 df_cbs__full_customers.to_csv(cbs_merge_path, index=False)
 print(f"Saved CBS with customer demographics to {cbs_merge_path}")
+# ------------------------------------------------------------------
 
 # %%
